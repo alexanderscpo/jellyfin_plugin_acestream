@@ -6,6 +6,7 @@ using MediaBrowser.Controller;
 using MediaBrowser.Controller.Channels;
 using MediaBrowser.Controller.Plugins;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.AceStream;
 
@@ -28,9 +29,18 @@ public sealed class PluginServiceRegistrator : IPluginServiceRegistrator
         serviceCollection.AddHttpClient(EngineSearchClient.HttpClientName);
         serviceCollection.AddSingleton<ISearchPort, EngineSearchClient>();
 
-        // Probes the live stream (via Jellyfin's IMediaEncoder) so the channel can hand
-        // Jellyfin the real codecs and let it choose remux over transcode.
-        serviceCollection.AddSingleton<IMediaSourceProbe, MediaEncoderStreamProbe>();
+        // Checks live stream readiness against the engine so a dead P2P channel is skipped fast
+        // instead of hanging the codec probe (the /search availability is only a stale snapshot).
+        serviceCollection.AddSingleton<IStreamReadiness, EngineStreamReadiness>();
+
+        // Probes the live stream (via Jellyfin's IMediaEncoder) so the channel can hand Jellyfin the
+        // real codecs and let it choose remux over transcode. The readiness gate wraps it: probe
+        // only once data is actually flowing.
+        serviceCollection.AddSingleton<MediaEncoderStreamProbe>();
+        serviceCollection.AddSingleton<IMediaSourceProbe>(sp => new ReadinessGatedProbe(
+            sp.GetRequiredService<MediaEncoderStreamProbe>(),
+            sp.GetRequiredService<IStreamReadiness>(),
+            sp.GetRequiredService<ILogger<ReadinessGatedProbe>>()));
 
         // Jellyfin does not auto-register plugin IChannel implementations; register it explicitly.
         serviceCollection.AddSingleton<IChannel, AceStreamChannel>();
