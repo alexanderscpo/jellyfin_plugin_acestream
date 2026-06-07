@@ -1,5 +1,5 @@
 using Jellyfin.Plugin.AceStream.Domain;
-using Jellyfin.Plugin.AceStream.Infrastructure.Engine;
+using Jellyfin.Plugin.AceStream.Infrastructure.Proxy;
 using MediaBrowser.Model.Dto;
 using Microsoft.Extensions.Logging;
 

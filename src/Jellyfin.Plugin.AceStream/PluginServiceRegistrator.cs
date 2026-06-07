@@ -29,9 +29,11 @@ public sealed class PluginServiceRegistrator : IPluginServiceRegistrator
         serviceCollection.AddHttpClient(EngineSearchClient.HttpClientName);
         serviceCollection.AddSingleton<ISearchPort, EngineSearchClient>();
 
-        // Checks live stream readiness against the engine so a dead P2P channel is skipped fast
-        // instead of hanging the codec probe (the /search availability is only a stale snapshot).
-        serviceCollection.AddSingleton<IStreamReadiness, EngineStreamReadiness>();
+        // Checks live readiness through acexy (the same path playback uses, so it shares the engine
+        // session) so a dead P2P channel is skipped fast instead of hanging the codec probe — the
+        // /search availability is only a stale snapshot.
+        serviceCollection.AddHttpClient(ProxyStreamReadiness.HttpClientName);
+        serviceCollection.AddSingleton<IStreamReadiness, ProxyStreamReadiness>();
 
         // Probes the live stream (via Jellyfin's IMediaEncoder) so the channel can hand Jellyfin the
         // real codecs and let it choose remux over transcode. The readiness gate wraps it: probe
