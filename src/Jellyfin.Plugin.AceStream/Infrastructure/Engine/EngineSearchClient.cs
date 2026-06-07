@@ -2,17 +2,26 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using Jellyfin.Plugin.AceStream.Application;
 using Jellyfin.Plugin.AceStream.Domain;
+using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.AceStream.Infrastructure.Engine;
 
 /// <summary>
 /// <see cref="ISearchPort"/> adapter backed by the AceStream engine's HTTP <c>/search</c> node.
 /// Translates the engine's grouped, snake_case JSON into flat domain <see cref="AceChannel"/>s.
-/// The engine base URL is read per request from <see cref="IEngineSettings"/> so configuration
-/// changes take effect without rebuilding this (potentially long-lived) client.
+/// The engine base URL is read per request from <see cref="IEngineSettings"/>, and a fresh
+/// <see cref="HttpClient"/> is resolved per request from <see cref="IHttpClientFactory"/> so the
+/// factory can rotate the underlying handler (a captured client would defeat that and leave the
+/// connection pool stale when the engine host changes). A transient engine failure degrades to an
+/// empty result rather than breaking the browse, mirroring the resilient probe path.
 /// </summary>
 public sealed class EngineSearchClient : ISearchPort
 {
+    /// <summary>
+    /// The name of the <see cref="IHttpClientFactory"/> client used to call the engine.
+    /// </summary>
+    internal const string HttpClientName = "AceEngine";
+
     private const int MaxPageSize = 200;
 
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -21,20 +30,27 @@ public sealed class EngineSearchClient : ISearchPort
         PropertyNameCaseInsensitive = true,
     };
 
-    private readonly HttpClient _httpClient;
+    private readonly IHttpClientFactory _httpClientFactory;
     private readonly IEngineSettings _settings;
+    private readonly ILogger<EngineSearchClient> _logger;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="EngineSearchClient"/> class.
     /// </summary>
-    /// <param name="httpClient">The HTTP client used to call the engine.</param>
+    /// <param name="httpClientFactory">Creates the HTTP client used to call the engine, per request.</param>
     /// <param name="settings">Provides the current engine base URL.</param>
-    public EngineSearchClient(HttpClient httpClient, IEngineSettings settings)
+    /// <param name="logger">The logger.</param>
+    public EngineSearchClient(
+        IHttpClientFactory httpClientFactory,
+        IEngineSettings settings,
+        ILogger<EngineSearchClient> logger)
     {
-        ArgumentNullException.ThrowIfNull(httpClient);
+        ArgumentNullException.ThrowIfNull(httpClientFactory);
         ArgumentNullException.ThrowIfNull(settings);
-        _httpClient = httpClient;
+        ArgumentNullException.ThrowIfNull(logger);
+        _httpClientFactory = httpClientFactory;
         _settings = settings;
+        _logger = logger;
     }
 
     /// <inheritdoc />
@@ -49,11 +65,22 @@ public sealed class EngineSearchClient : ISearchPort
         }
 
         var url = BuildRequestUrl(baseUrl, request);
-        var dto = await _httpClient
-            .GetFromJsonAsync<SearchResponseDto>(url, JsonOptions, cancellationToken)
-            .ConfigureAwait(false);
+        try
+        {
+            var httpClient = _httpClientFactory.CreateClient(HttpClientName);
+            var dto = await httpClient
+                .GetFromJsonAsync<SearchResponseDto>(url, JsonOptions, cancellationToken)
+                .ConfigureAwait(false);
 
-        return Map(dto);
+            return Map(dto);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or JsonException)
+        {
+            // A transient engine failure (engine down, bad body) must not break browsing —
+            // degrade to an empty page. Caller cancellation (OperationCanceledException) still propagates.
+            _logger.LogWarning(ex, "AceStream search failed for {Url}; returning empty result.", url);
+            return new SearchResult(0, Array.Empty<AceChannel>());
+        }
     }
 
     private static string BuildRequestUrl(string baseUrl, SearchRequest request)

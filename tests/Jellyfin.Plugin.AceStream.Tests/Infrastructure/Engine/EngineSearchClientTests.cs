@@ -1,7 +1,9 @@
+using System.Net;
 using Jellyfin.Plugin.AceStream.Application;
 using Jellyfin.Plugin.AceStream.Domain;
 using Jellyfin.Plugin.AceStream.Infrastructure.Engine;
 using Jellyfin.Plugin.AceStream.Tests.TestSupport;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Jellyfin.Plugin.AceStream.Tests.Infrastructure.Engine;
 
@@ -21,11 +23,14 @@ public class EngineSearchClientTests
         public string BaseUrl => "http://engine:6878";
     }
 
-    private static EngineSearchClient ClientReturning(string json, out StubHttpMessageHandler handler)
+    private static EngineSearchClient ClientReturning(
+        string json,
+        out StubHttpMessageHandler handler,
+        HttpStatusCode statusCode = HttpStatusCode.OK)
     {
-        handler = new StubHttpMessageHandler(json);
-        var http = new HttpClient(handler);
-        return new EngineSearchClient(http, new FakeEngineSettings());
+        handler = new StubHttpMessageHandler(json, statusCode);
+        var factory = new FakeHttpClientFactory(handler);
+        return new EngineSearchClient(factory, new FakeEngineSettings(), NullLogger<EngineSearchClient>.Instance);
     }
 
     [Fact]
@@ -106,5 +111,53 @@ public class EngineSearchClientTests
 
         Assert.Single(result.Channels);
         Assert.Equal("Good", result.Channels[0].Name);
+    }
+
+    [Fact]
+    public async Task SearchAsync_CreatesClientFromFactoryPerCall()
+    {
+        var handler = new StubHttpMessageHandler(RealSearchJson);
+        var factory = new FakeHttpClientFactory(handler);
+        var client = new EngineSearchClient(factory, new FakeEngineSettings(), NullLogger<EngineSearchClient>.Instance);
+
+        await client.SearchAsync(new SearchRequest { Query = "tv" }, CancellationToken.None);
+        await client.SearchAsync(new SearchRequest { Query = "tv" }, CancellationToken.None);
+
+        // A fresh client per call lets IHttpClientFactory rotate the handler; capturing one would defeat it.
+        Assert.Equal(2, factory.CreateClientCallCount);
+        Assert.Equal(EngineSearchClient.HttpClientName, factory.LastRequestedName);
+    }
+
+    [Fact]
+    public async Task SearchAsync_EngineReturns503_ReturnsEmptyResult()
+    {
+        var client = ClientReturning("{}", out _, HttpStatusCode.ServiceUnavailable);
+
+        var result = await client.SearchAsync(new SearchRequest { Query = "tv" }, CancellationToken.None);
+
+        Assert.Equal(0, result.Total);
+        Assert.Empty(result.Channels);
+    }
+
+    [Fact]
+    public async Task SearchAsync_MalformedJsonBody_ReturnsEmptyResult()
+    {
+        var client = ClientReturning("not-json-at-all", out _);
+
+        var result = await client.SearchAsync(new SearchRequest { Query = "tv" }, CancellationToken.None);
+
+        Assert.Equal(0, result.Total);
+        Assert.Empty(result.Channels);
+    }
+
+    [Fact]
+    public async Task SearchAsync_CallerCancels_ThrowsOperationCanceledException()
+    {
+        var client = ClientReturning(RealSearchJson, out _);
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => client.SearchAsync(new SearchRequest { Query = "tv" }, cts.Token));
     }
 }

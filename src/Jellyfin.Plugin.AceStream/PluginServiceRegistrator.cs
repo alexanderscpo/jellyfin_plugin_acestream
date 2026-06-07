@@ -21,7 +21,12 @@ public sealed class PluginServiceRegistrator : IPluginServiceRegistrator
         // so the search adapter builds absolute URLs and does not depend on HttpClient.BaseAddress.
         serviceCollection.AddSingleton<IEngineSettings, PluginEngineSettings>();
         serviceCollection.AddSingleton<IProxySettings, PluginProxySettings>();
-        serviceCollection.AddHttpClient<ISearchPort, EngineSearchClient>();
+
+        // Register a named client (not a typed client) and resolve it per request via
+        // IHttpClientFactory. The search adapter is a singleton, so a typed/captured client would
+        // pin one HttpMessageHandler forever and defeat the factory's handler rotation.
+        serviceCollection.AddHttpClient(EngineSearchClient.HttpClientName);
+        serviceCollection.AddSingleton<ISearchPort, EngineSearchClient>();
 
         // Probes the live stream (via Jellyfin's IMediaEncoder) so the channel can hand
         // Jellyfin the real codecs and let it choose remux over transcode.
