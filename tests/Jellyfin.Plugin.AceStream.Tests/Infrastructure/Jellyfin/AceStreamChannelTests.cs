@@ -178,4 +178,24 @@ public class AceStreamChannelTests
 
         Assert.Empty(sources);
     }
+
+    [Fact]
+    public async Task GetChannelItemMediaInfo_NullId_ReturnsEmpty()
+    {
+        var channel = Channel();
+
+        var sources = await channel.GetChannelItemMediaInfo(null!, CancellationToken.None);
+
+        Assert.Empty(sources);
+    }
+
+    [Fact]
+    public async Task GetChannelItemMediaInfo_WhitespaceId_ReturnsEmpty()
+    {
+        var channel = Channel();
+
+        var sources = await channel.GetChannelItemMediaInfo("   ", CancellationToken.None);
+
+        Assert.Empty(sources);
+    }
 }

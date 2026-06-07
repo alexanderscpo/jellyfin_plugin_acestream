@@ -85,9 +85,20 @@ public sealed class AceStreamChannel : IChannel, IRequiresMediaInfoCallback
     /// <inheritdoc />
     public async Task<IEnumerable<MediaSourceInfo>> GetChannelItemMediaInfo(string id, CancellationToken cancellationToken)
     {
-        var proxyBaseUrl = _proxySettings.BaseUrl;
+        // A null/blank id is unplayable; degrade to empty like every other failure path here
+        // (and so the StartsWith below is safe).
+        if (string.IsNullOrWhiteSpace(id))
+        {
+            return Enumerable.Empty<MediaSourceInfo>();
+        }
 
-        if (string.IsNullOrWhiteSpace(proxyBaseUrl) || id.StartsWith(CategoryPrefix, StringComparison.Ordinal))
+        if (id.StartsWith(CategoryPrefix, StringComparison.Ordinal))
+        {
+            return Enumerable.Empty<MediaSourceInfo>();
+        }
+
+        var proxyBaseUrl = _proxySettings.BaseUrl;
+        if (string.IsNullOrWhiteSpace(proxyBaseUrl))
         {
             return Enumerable.Empty<MediaSourceInfo>();
         }
