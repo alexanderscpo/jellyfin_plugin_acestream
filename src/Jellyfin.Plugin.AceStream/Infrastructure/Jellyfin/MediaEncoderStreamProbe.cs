@@ -63,12 +63,23 @@ public sealed class MediaEncoderStreamProbe : IMediaSourceProbe
                 source.Container = info.Container;
             }
         }
-        catch (OperationCanceledException) when (timeout.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
-            _logger.LogWarning(
-                "AceStream probe timed out after {Timeout}s for {Path}; Jellyfin will transcode.",
-                ProbeTimeout.TotalSeconds,
-                source.Path);
+            // Any cancellation the caller did not request is a probe failure (timeout or a spurious
+            // internal cancel): leave the source unchanged rather than breaking playback.
+            if (timeout.IsCancellationRequested)
+            {
+                _logger.LogWarning(
+                    "AceStream probe timed out after {Timeout}s for {Path}; Jellyfin will transcode.",
+                    ProbeTimeout.TotalSeconds,
+                    source.Path);
+            }
+            else
+            {
+                _logger.LogWarning(
+                    "AceStream probe was cancelled unexpectedly for {Path}; Jellyfin will transcode.",
+                    source.Path);
+            }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
