@@ -1,0 +1,13 @@
+# Build output
+[Bb]in/
+[Oo]bj/
+
+# IDE
+.vs/
+.idea/
+*.user
+*.suo
+
+# Agent-local / machine-specific
+.claude/settings.local.json
+.atl/.skill-registry.cache.json

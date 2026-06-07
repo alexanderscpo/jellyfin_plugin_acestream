@@ -1,0 +1,36 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{AE1B56B3-DB09-4BCD-A978-B1239062F321}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Jellyfin.Plugin.AceStream", "src\Jellyfin.Plugin.AceStream\Jellyfin.Plugin.AceStream.csproj", "{EA7780E7-FF51-449F-A2CA-F0A3542C0028}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{FCA2001D-2C19-442A-87E7-E0157BD184AF}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Jellyfin.Plugin.AceStream.Tests", "tests\Jellyfin.Plugin.AceStream.Tests\Jellyfin.Plugin.AceStream.Tests.csproj", "{349E1A15-89EA-4736-934C-F072C3EC9366}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{EA7780E7-FF51-449F-A2CA-F0A3542C0028}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{EA7780E7-FF51-449F-A2CA-F0A3542C0028}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{EA7780E7-FF51-449F-A2CA-F0A3542C0028}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{EA7780E7-FF51-449F-A2CA-F0A3542C0028}.Release|Any CPU.Build.0 = Release|Any CPU
+		{349E1A15-89EA-4736-934C-F072C3EC9366}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{349E1A15-89EA-4736-934C-F072C3EC9366}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{349E1A15-89EA-4736-934C-F072C3EC9366}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{349E1A15-89EA-4736-934C-F072C3EC9366}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{EA7780E7-FF51-449F-A2CA-F0A3542C0028} = {AE1B56B3-DB09-4BCD-A978-B1239062F321}
+		{349E1A15-89EA-4736-934C-F072C3EC9366} = {FCA2001D-2C19-442A-87E7-E0157BD184AF}
+	EndGlobalSection
+EndGlobal

@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <title>AceStream</title>
+</head>
+<body>
+<div id="AceStreamConfigPage" data-role="page" class="page type-interior pluginConfigurationPage">
+    <div data-role="content">
+        <div class="content-primary">
+            <form id="AceStreamConfigForm">
+                <div class="inputContainer">
+                    <label class="inputLabel inputLabelUnfocused" for="ProxyUrl">Proxy (acexy) URL</label>
+                    <input id="ProxyUrl" name="ProxyUrl" type="text" is="emby-input" />
+                    <div class="fieldDescription">Base URL of the acexy proxy used for playback (multiplexing + per-client pid).</div>
+                </div>
+                <div class="inputContainer">
+                    <label class="inputLabel inputLabelUnfocused" for="EngineUrl">Engine URL</label>
+                    <input id="EngineUrl" name="EngineUrl" type="text" is="emby-input" />
+                    <div class="fieldDescription">Base URL of the AceStream engine used for search/browse (/search).</div>
+                </div>
+                <div class="inputContainer">
+                    <label class="inputLabel inputLabelUnfocused" for="ProbeAnalyzeDurationMs">Probe analyze duration (ms)</label>
+                    <input id="ProbeAnalyzeDurationMs" name="ProbeAnalyzeDurationMs" type="number" min="1" step="500" is="emby-input" />
+                    <div class="fieldDescription">How long ffprobe analyzes a live stream to detect its codecs. Lower starts faster; higher is more robust on slow channels. Default 5000.</div>
+                </div>
+                <button is="emby-button" type="submit" class="raised button-submit block emby-button">
+                    <span>Save</span>
+                </button>
+            </form>
+        </div>
+    </div>
+    <script type="text/javascript">
+        (function () {
+            var pluginId = 'de5478ad-fc34-40f6-a6f6-83735591c297';
+
+            document.querySelector('#AceStreamConfigPage').addEventListener('viewshow', function () {
+                Dashboard.showLoadingMsg();
+                ApiClient.getPluginConfiguration(pluginId).then(function (config) {
+                    document.querySelector('#ProxyUrl').value = config.ProxyUrl || '';
+                    document.querySelector('#EngineUrl').value = config.EngineUrl || '';
+                    document.querySelector('#ProbeAnalyzeDurationMs').value = config.ProbeAnalyzeDurationMs || 5000;
+                    Dashboard.hideLoadingMsg();
+                });
+            });
+
+            document.querySelector('#AceStreamConfigForm').addEventListener('submit', function (e) {
+                e.preventDefault();
+                Dashboard.showLoadingMsg();
+                ApiClient.getPluginConfiguration(pluginId).then(function (config) {
+                    config.ProxyUrl = document.querySelector('#ProxyUrl').value;
+                    config.EngineUrl = document.querySelector('#EngineUrl').value;
+                    config.ProbeAnalyzeDurationMs = parseInt(document.querySelector('#ProbeAnalyzeDurationMs').value, 10) || 5000;
+                    ApiClient.updatePluginConfiguration(pluginId, config).then(function (result) {
+                        Dashboard.processPluginConfigurationUpdateResult(result);
+                    });
+                });
+                return false;
+            });
+        })();
+    </script>
+</div>
+</body>
+</html>
