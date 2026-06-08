@@ -6,6 +6,7 @@ using MediaBrowser.Controller.Channels;
 using MediaBrowser.Model.Channels;
 using MediaBrowser.Model.Dto;
 using MediaBrowser.Model.Entities;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Jellyfin.Plugin.AceStream.Tests.Infrastructure.Jellyfin;
 
@@ -92,7 +93,7 @@ public class AceStreamChannelTests
     {
         var searchPort = port ?? new FakeSearchPort(searchResult ?? new SearchResult(0, Array.Empty<AceChannel>()));
         var proxySettings = new FakeProxySettings(proxyUrl, probeAnalyzeDurationMs);
-        return new AceStreamChannel(searchPort, proxySettings, probe ?? new FakeMediaSourceProbe(), customChannels ?? new FakeCustomChannelRepository());
+        return new AceStreamChannel(searchPort, proxySettings, probe ?? new FakeMediaSourceProbe(), customChannels ?? new FakeCustomChannelRepository(), NullLogger<AceStreamChannel>.Instance);
     }
 
     [Fact]
@@ -272,5 +273,50 @@ public class AceStreamChannelTests
 
         Assert.Single(sources);
         Assert.Equal($"http://acexy:8080/ace/getstream?infohash={Hash}", sources[0].Path);
+    }
+
+    [Fact]
+    public void DataVersion_IsStable_ForSameCustomChannels()
+    {
+        var custom = new FakeCustomChannelRepository(new CustomChannel("TVO", Infohash.Create(Hash)));
+
+        var a = Channel(customChannels: custom).DataVersion;
+        var b = Channel(customChannels: custom).DataVersion;
+
+        Assert.Equal(a, b);
+    }
+
+    [Fact]
+    public void DataVersion_Changes_WhenCustomChannelsChange()
+    {
+        var before = Channel(customChannels: new FakeCustomChannelRepository(
+            new CustomChannel("TVO", Infohash.Create(Hash)))).DataVersion;
+
+        var after = Channel(customChannels: new FakeCustomChannelRepository(
+            new CustomChannel("TVO", Infohash.Create(Hash)),
+            new CustomChannel("DAZN", Infohash.Create(Hash2)))).DataVersion;
+
+        Assert.NotEqual(before, after);
+    }
+
+    [Fact]
+    public void DataVersion_Changes_WhenCustomChannelNameChanges()
+    {
+        var before = Channel(customChannels: new FakeCustomChannelRepository(
+            new CustomChannel("Old Name", Infohash.Create(Hash)))).DataVersion;
+
+        var after = Channel(customChannels: new FakeCustomChannelRepository(
+            new CustomChannel("New Name", Infohash.Create(Hash)))).DataVersion;
+
+        Assert.NotEqual(before, after);
+    }
+
+    [Fact]
+    public void DataVersion_IsStable_WhenNoCustomChannels()
+    {
+        var a = Channel().DataVersion;
+        var b = Channel().DataVersion;
+
+        Assert.Equal(a, b);
     }
 }

@@ -6,6 +6,7 @@ using MediaBrowser.Controller.Providers;
 using MediaBrowser.Model.Channels;
 using MediaBrowser.Model.Dto;
 using MediaBrowser.Model.Entities;
+using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.AceStream.Infrastructure.Jellyfin;
 
@@ -25,6 +26,7 @@ public sealed class AceStreamChannel : IChannel, IRequiresMediaInfoCallback
     private readonly IProxySettings _proxySettings;
     private readonly IMediaSourceProbe _probe;
     private readonly ICustomChannelRepository _customChannels;
+    private readonly ILogger<AceStreamChannel> _logger;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="AceStreamChannel"/> class.
@@ -33,16 +35,19 @@ public sealed class AceStreamChannel : IChannel, IRequiresMediaInfoCallback
     /// <param name="proxySettings">Provides the proxy base URL used to build playback sources.</param>
     /// <param name="probe">Probes the live stream so Jellyfin sees the real codecs.</param>
     /// <param name="customChannels">Provides user-defined channels from the M3U playlist config.</param>
-    public AceStreamChannel(ISearchPort searchPort, IProxySettings proxySettings, IMediaSourceProbe probe, ICustomChannelRepository customChannels)
+    /// <param name="logger">The logger.</param>
+    public AceStreamChannel(ISearchPort searchPort, IProxySettings proxySettings, IMediaSourceProbe probe, ICustomChannelRepository customChannels, ILogger<AceStreamChannel> logger)
     {
         ArgumentNullException.ThrowIfNull(searchPort);
         ArgumentNullException.ThrowIfNull(proxySettings);
         ArgumentNullException.ThrowIfNull(probe);
         ArgumentNullException.ThrowIfNull(customChannels);
+        ArgumentNullException.ThrowIfNull(logger);
         _searchPort = searchPort;
         _proxySettings = proxySettings;
         _probe = probe;
         _customChannels = customChannels;
+        _logger = logger;
     }
 
     /// <inheritdoc />
@@ -52,7 +57,20 @@ public sealed class AceStreamChannel : IChannel, IRequiresMediaInfoCallback
     public string Description => "Browse, search and play AceStream channels.";
 
     /// <inheritdoc />
-    public string DataVersion => "1";
+    /// <remarks>
+    /// Jellyfin only re-enumerates a channel's items when this value changes, so it must reflect
+    /// the custom-channel set: editing the M3U playlist in settings changes the hash, which forces
+    /// the "Custom" folder to rebuild on the next browse.
+    /// </remarks>
+    public string DataVersion
+    {
+        get
+        {
+            var payload = string.Join('\n', _customChannels.GetAll().Select(c => c.Infohash.Value + '|' + c.Name));
+            var hash = System.Security.Cryptography.SHA1.HashData(System.Text.Encoding.UTF8.GetBytes(payload));
+            return "2-" + Convert.ToHexString(hash);
+        }
+    }
 
     /// <inheritdoc />
     public string HomePageUrl => "https://acestream.org";
@@ -158,8 +176,10 @@ public sealed class AceStreamChannel : IChannel, IRequiresMediaInfoCallback
             })
             .ToList();
 
-        if (_customChannels.GetAll().Count > 0)
+        var customCount = _customChannels.GetAll().Count;
+        if (customCount > 0)
         {
+            _logger.LogDebug("AceStream serving {Count} custom channel(s) from the M3U playlist.", customCount);
             items.Add(new ChannelItemInfo
             {
                 Id = CustomFolderId,
