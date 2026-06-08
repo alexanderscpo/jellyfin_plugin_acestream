@@ -55,6 +55,9 @@ public sealed class PluginServiceRegistrator : IPluginServiceRegistrator
                 sp.GetRequiredService<ILogger<CachingMediaSourceProbe>>());
         });
 
+        // User-defined channels from the M3U playlist in plugin settings.
+        serviceCollection.AddSingleton<ICustomChannelRepository, PluginCustomChannelRepository>();
+
         // Jellyfin does not auto-register plugin IChannel implementations; register it explicitly.
         serviceCollection.AddSingleton<IChannel, AceStreamChannel>();
     }

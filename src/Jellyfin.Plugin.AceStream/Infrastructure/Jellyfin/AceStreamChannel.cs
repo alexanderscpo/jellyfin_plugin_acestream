@@ -10,18 +10,21 @@ using MediaBrowser.Model.Entities;
 namespace Jellyfin.Plugin.AceStream.Infrastructure.Jellyfin;
 
 /// <summary>
-/// The Jellyfin channel for AceStream. The root lists category folders, and each folder
-/// lists that category's channels (paged) via the engine's <c>/search</c>. Playback media
-/// sources are resolved on demand (<see cref="IRequiresMediaInfoCallback"/>) to the acexy proxy.
+/// The Jellyfin channel for AceStream. The root lists category folders (from the engine's
+/// <c>/search</c>) and, when configured, a "Custom" folder populated from the plugin's M3U
+/// playlist. Playback media sources are resolved on demand (<see cref="IRequiresMediaInfoCallback"/>)
+/// to the acexy proxy.
 /// </summary>
 public sealed class AceStreamChannel : IChannel, IRequiresMediaInfoCallback
 {
     private const string CategoryPrefix = "category:";
+    private const string CustomFolderId = "custom";
     private const int DefaultPageSize = 50;
 
     private readonly ISearchPort _searchPort;
     private readonly IProxySettings _proxySettings;
     private readonly IMediaSourceProbe _probe;
+    private readonly ICustomChannelRepository _customChannels;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="AceStreamChannel"/> class.
@@ -29,14 +32,17 @@ public sealed class AceStreamChannel : IChannel, IRequiresMediaInfoCallback
     /// <param name="searchPort">The search port used to list a category's channels.</param>
     /// <param name="proxySettings">Provides the proxy base URL used to build playback sources.</param>
     /// <param name="probe">Probes the live stream so Jellyfin sees the real codecs.</param>
-    public AceStreamChannel(ISearchPort searchPort, IProxySettings proxySettings, IMediaSourceProbe probe)
+    /// <param name="customChannels">Provides user-defined channels from the M3U playlist config.</param>
+    public AceStreamChannel(ISearchPort searchPort, IProxySettings proxySettings, IMediaSourceProbe probe, ICustomChannelRepository customChannels)
     {
         ArgumentNullException.ThrowIfNull(searchPort);
         ArgumentNullException.ThrowIfNull(proxySettings);
         ArgumentNullException.ThrowIfNull(probe);
+        ArgumentNullException.ThrowIfNull(customChannels);
         _searchPort = searchPort;
         _proxySettings = proxySettings;
         _probe = probe;
+        _customChannels = customChannels;
     }
 
     /// <inheritdoc />
@@ -71,7 +77,12 @@ public sealed class AceStreamChannel : IChannel, IRequiresMediaInfoCallback
 
         if (string.IsNullOrEmpty(query.FolderId))
         {
-            return BuildCategoryFolders();
+            return BuildRootFolders();
+        }
+
+        if (query.FolderId == CustomFolderId)
+        {
+            return BuildCustomItems();
         }
 
         if (query.FolderId.StartsWith(CategoryPrefix, StringComparison.Ordinal))
@@ -136,7 +147,7 @@ public sealed class AceStreamChannel : IChannel, IRequiresMediaInfoCallback
         }
     }
 
-    private static ChannelItemResult BuildCategoryFolders()
+    private ChannelItemResult BuildRootFolders()
     {
         var items = AceCategories.Browseable
             .Select(category => new ChannelItemInfo
@@ -146,6 +157,32 @@ public sealed class AceStreamChannel : IChannel, IRequiresMediaInfoCallback
                 Type = ChannelItemType.Folder,
             })
             .ToList();
+
+        if (_customChannels.GetAll().Count > 0)
+        {
+            items.Add(new ChannelItemInfo
+            {
+                Id = CustomFolderId,
+                Name = "Custom",
+                Type = ChannelItemType.Folder,
+            });
+        }
+
+        return new ChannelItemResult { Items = items, TotalRecordCount = items.Count };
+    }
+
+    private ChannelItemResult BuildCustomItems()
+    {
+        var channels = _customChannels.GetAll();
+        var items = channels.Select(c => new ChannelItemInfo
+        {
+            Id = c.Infohash.Value,
+            Name = c.Name,
+            Type = ChannelItemType.Media,
+            MediaType = ChannelMediaType.Video,
+            ContentType = ChannelMediaContentType.TvExtra,
+            IsLiveStream = true,
+        }).ToList();
 
         return new ChannelItemResult { Items = items, TotalRecordCount = items.Count };
     }

@@ -29,6 +29,11 @@
                     <input id="CodecCacheTtlMinutes" name="CodecCacheTtlMinutes" type="number" min="0" step="1" is="emby-input" />
                     <div class="fieldDescription">How long discovered codecs are cached per channel so repeat plays skip the readiness check and ffprobe. Set to 0 to disable the cache. Default 5.</div>
                 </div>
+                <div class="inputContainer">
+                    <label class="inputLabel inputLabelUnfocused" for="M3uPlaylist">Custom channels (M3U playlist)</label>
+                    <textarea id="M3uPlaylist" name="M3uPlaylist" is="emby-textarea" rows="10" style="font-family:monospace;width:100%;resize:vertical"></textarea>
+                    <div class="fieldDescription">Paste an M3U playlist with <code>acestream://</code> URIs. Channels appear in a "Custom" folder in the browser. Standard <code>#EXTINF</code> headers are supported; non-AceStream entries are ignored.</div>
+                </div>
                 <button is="emby-button" type="submit" class="raised button-submit block emby-button">
                     <span>Save</span>
                 </button>
@@ -47,6 +52,7 @@
                     document.querySelector('#ProbeAnalyzeDurationMs').value = config.ProbeAnalyzeDurationMs || 5000;
                     document.querySelector('#CodecCacheTtlMinutes').value =
                         config.CodecCacheTtlMinutes != null ? config.CodecCacheTtlMinutes : 5;
+                    document.querySelector('#M3uPlaylist').value = config.M3uPlaylist || '';
                     Dashboard.hideLoadingMsg();
                 });
             });
@@ -60,6 +66,7 @@
                     config.ProbeAnalyzeDurationMs = parseInt(document.querySelector('#ProbeAnalyzeDurationMs').value, 10) || 5000;
                     var ttl = parseInt(document.querySelector('#CodecCacheTtlMinutes').value, 10);
                     config.CodecCacheTtlMinutes = isNaN(ttl) ? 5 : ttl; // 0 means "disable cache", so don't coalesce
+                    config.M3uPlaylist = document.querySelector('#M3uPlaylist').value;
                     ApiClient.updatePluginConfiguration(pluginId, config).then(function (result) {
                         Dashboard.processPluginConfigurationUpdateResult(result);
                     });

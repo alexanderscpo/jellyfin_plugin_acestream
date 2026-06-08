@@ -30,4 +30,11 @@ public sealed class PluginConfiguration : BasePluginConfiguration
     /// <c>0</c> to disable the cache entirely.
     /// </summary>
     public int CodecCacheTtlMinutes { get; set; } = 5;
+
+    /// <summary>
+    /// Gets or sets an M3U playlist with <c>acestream://</c> URIs that appear as a "Custom" folder
+    /// in the channel browser. Standard <c>#EXTINF</c> headers are supported; entries with
+    /// non-AceStream URLs or invalid infohashes are silently ignored.
+    /// </summary>
+    public string M3uPlaylist { get; set; } = string.Empty;
 }
