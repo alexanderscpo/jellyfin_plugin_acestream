@@ -23,4 +23,11 @@ public sealed class PluginConfiguration : BasePluginConfiguration
     /// bounded; smaller is faster to start, larger is more robust on slow channels.
     /// </summary>
     public int ProbeAnalyzeDurationMs { get; set; } = 5000;
+
+    /// <summary>
+    /// Gets or sets how long (in minutes) discovered codecs are cached per channel so repeat plays
+    /// skip the readiness check and ffprobe. Codecs are stable, so a few minutes is plenty; set to
+    /// <c>0</c> to disable the cache entirely.
+    /// </summary>
+    public int CodecCacheTtlMinutes { get; set; } = 5;
 }

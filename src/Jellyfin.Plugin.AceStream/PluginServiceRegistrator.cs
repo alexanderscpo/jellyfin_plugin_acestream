@@ -35,14 +35,25 @@ public sealed class PluginServiceRegistrator : IPluginServiceRegistrator
         serviceCollection.AddHttpClient(ProxyStreamReadiness.HttpClientName);
         serviceCollection.AddSingleton<IStreamReadiness, ProxyStreamReadiness>();
 
-        // Probes the live stream (via Jellyfin's IMediaEncoder) so the channel can hand Jellyfin the
-        // real codecs and let it choose remux over transcode. The readiness gate wraps it: probe
-        // only once data is actually flowing.
+        // Probe pipeline (outermost first): cache -> readiness gate -> ffprobe.
+        //  - MediaEncoderStreamProbe runs ffprobe (via Jellyfin's IMediaEncoder) for the real codecs.
+        //  - ReadinessGatedProbe skips it when the channel is delivering no data.
+        //  - CachingMediaSourceProbe caches a successful result so repeat plays skip both.
+        serviceCollection.AddSingleton<IProbeCacheSettings, PluginProbeCacheSettings>();
         serviceCollection.AddSingleton<MediaEncoderStreamProbe>();
-        serviceCollection.AddSingleton<IMediaSourceProbe>(sp => new ReadinessGatedProbe(
-            sp.GetRequiredService<MediaEncoderStreamProbe>(),
-            sp.GetRequiredService<IStreamReadiness>(),
-            sp.GetRequiredService<ILogger<ReadinessGatedProbe>>()));
+        serviceCollection.AddSingleton<IMediaSourceProbe>(sp =>
+        {
+            var gated = new ReadinessGatedProbe(
+                sp.GetRequiredService<MediaEncoderStreamProbe>(),
+                sp.GetRequiredService<IStreamReadiness>(),
+                sp.GetRequiredService<ILogger<ReadinessGatedProbe>>());
+
+            return new CachingMediaSourceProbe(
+                gated,
+                sp.GetRequiredService<IProbeCacheSettings>(),
+                TimeProvider.System,
+                sp.GetRequiredService<ILogger<CachingMediaSourceProbe>>());
+        });
 
         // Jellyfin does not auto-register plugin IChannel implementations; register it explicitly.
         serviceCollection.AddSingleton<IChannel, AceStreamChannel>();
