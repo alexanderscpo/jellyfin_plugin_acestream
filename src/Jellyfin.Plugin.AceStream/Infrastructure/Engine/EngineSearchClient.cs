@@ -73,7 +73,8 @@ public sealed class EngineSearchClient : ISearchPort
         var baseUrl = _settings.BaseUrl;
         if (string.IsNullOrWhiteSpace(baseUrl))
         {
-            throw new InvalidOperationException("The AceStream engine URL is not configured.");
+            _logger.LogWarning("AceStream engine URL is not configured; returning empty result.");
+            return new SearchResult(0, Array.Empty<AceChannel>());
         }
 
         var url = BuildRequestUrl(baseUrl, request);

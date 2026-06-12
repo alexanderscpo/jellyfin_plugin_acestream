@@ -23,6 +23,11 @@ public class EngineSearchClientTests
         public string BaseUrl => "http://engine:6878";
     }
 
+    private sealed class EmptyBaseUrlEngineSettings : IEngineSettings
+    {
+        public string BaseUrl => string.Empty;
+    }
+
     private static EngineSearchClient ClientReturning(
         string json,
         out StubHttpMessageHandler handler,
@@ -159,6 +164,26 @@ public class EngineSearchClientTests
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(
             () => client.SearchAsync(new SearchRequest { Query = "tv" }, cts.Token));
+    }
+
+    [Fact]
+    public async Task SearchAsync_NoBaseUrlConfigured_ReturnsEmptyResult()
+    {
+        // Arrange: settings with an empty base URL — same missing-config path as empty proxy URL
+        // and empty M3U. Should degrade soft (empty result) rather than throwing.
+        var handler = new StubHttpMessageHandler(RealSearchJson);
+        var factory = new FakeHttpClientFactory(handler);
+        var client = new EngineSearchClient(
+            factory,
+            new EmptyBaseUrlEngineSettings(),
+            NullLogger<EngineSearchClient>.Instance);
+
+        // Act
+        var result = await client.SearchAsync(new SearchRequest { Query = "tv" }, CancellationToken.None);
+
+        // Assert
+        Assert.Equal(0, result.Total);
+        Assert.Empty(result.Channels);
     }
 
     [Fact]
