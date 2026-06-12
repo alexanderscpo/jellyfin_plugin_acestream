@@ -112,6 +112,10 @@ public sealed class AceLiveResolver : IAceLiveResolver
             return true;
         }
 
+        // Evict the stale entry eagerly so the dictionary does not grow unboundedly with
+        // expired keys when re-resolution subsequently fails (no fresh entry overwrites it).
+        _cache.TryRemove(url, out _);
+
         infohash = null;
         return false;
     }

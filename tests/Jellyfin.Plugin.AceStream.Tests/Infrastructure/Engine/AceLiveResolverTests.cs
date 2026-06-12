@@ -254,4 +254,81 @@ public class AceLiveResolverTests
         await Assert.ThrowsAnyAsync<OperationCanceledException>(
             () => resolver.ResolveAsync("http://example.com/stream.acelive", cts.Token));
     }
+
+    // ── Fix 2 — Invalid infohash from engine ─────────────────────────────────
+
+    [Fact]
+    public async Task ResolveAsync_InvalidInfohashInResponse_ReturnsNull()
+    {
+        // Engine returns a syntactically valid JSON with an infohash value that fails
+        // Infohash.Create validation — exercises the ArgumentException catch path in ParseAndCache.
+        // No RED phase needed: the catch block already exists in production code.
+        var handler = new ScriptedHttpMessageHandler((_, _) =>
+            Task.FromResult(JsonResponse("""{"response":{"infohash":"not-a-valid-hash"}}""")));
+        var resolver = ResolverWith(handler);
+
+        var result = await resolver.ResolveAsync("http://example.com/stream.acelive", CancellationToken.None);
+
+        Assert.Null(result);
+    }
+
+    // ── Fix 3 — Named client assertion in happy-path test ─────────────────────
+
+    [Fact]
+    public async Task ResolveAsync_CacheMiss_UsesCorrectNamedHttpClient()
+    {
+        var url = "http://example.com/stream.acelive";
+        var handler = new ScriptedHttpMessageHandler((_, _) =>
+            Task.FromResult(JsonResponse(SuccessJson)));
+        var factory = new FakeHttpClientFactory(handler);
+        var resolver = new AceLiveResolver(factory, new FakeEngineSettings(), NullLogger<AceLiveResolver>.Instance);
+
+        await resolver.ResolveAsync(url, CancellationToken.None);
+
+        Assert.Equal(EngineSearchClient.HttpClientName, factory.LastRequestedName);
+    }
+
+    // ── Fix 4 — Stale entry must be evicted when re-resolution fails (TDD) ───
+
+    [Fact]
+    public async Task ResolveAsync_ExpiredEntry_FailedRefresh_DoesNotReturnStale()
+    {
+        // Setup: resolve once successfully so the entry is cached.
+        var aceUrl = "http://example.com/stream.acelive";
+        var ttl = TimeSpan.FromMinutes(30);
+        var start = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        var timeProvider = new MutableTimeProvider(start);
+
+        var callCount = 0;
+        var handler = new ScriptedHttpMessageHandler((_, _) =>
+        {
+            callCount++;
+            if (callCount == 1)
+            {
+                return Task.FromResult(JsonResponse(SuccessJson));
+            }
+
+            // Second call: engine fails
+            return Task.FromResult(JsonResponse("{}", HttpStatusCode.InternalServerError));
+        });
+
+        var resolver = ResolverWith(handler, timeProvider: timeProvider, ttl: ttl);
+
+        // First call populates the cache.
+        var first = await resolver.ResolveAsync(aceUrl, CancellationToken.None);
+        Assert.NotNull(first);
+
+        // Advance past TTL so the cached entry is expired.
+        timeProvider.Advance(ttl + TimeSpan.FromSeconds(1));
+
+        // Second call: re-resolution fails. Must return null (not the stale cached value).
+        var result = await resolver.ResolveAsync(aceUrl, CancellationToken.None);
+
+        Assert.Null(result);
+
+        // The stale entry must be removed: a third call must also hit HTTP (not return stale).
+        var third = await resolver.ResolveAsync(aceUrl, CancellationToken.None);
+        Assert.Null(third);
+        Assert.Equal(3, callCount); // all three went to HTTP — no stale served
+    }
 }
