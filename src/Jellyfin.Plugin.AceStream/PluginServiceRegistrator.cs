@@ -58,7 +58,7 @@ public sealed class PluginServiceRegistrator : IPluginServiceRegistrator
         // Registered now so PR2 only needs to inject it into AceStreamChannel without touching
         // this file again. The singleton is safe: it is stateless except for its in-memory
         // cache, which is intentional and thread-safe (ConcurrentDictionary).
-        serviceCollection.AddSingleton<AceLiveResolver>();
+        serviceCollection.AddSingleton<IAceLiveResolver, AceLiveResolver>();
 
         // User-defined channels from the M3U playlist in plugin settings.
         serviceCollection.AddSingleton<ICustomChannelRepository, PluginCustomChannelRepository>();

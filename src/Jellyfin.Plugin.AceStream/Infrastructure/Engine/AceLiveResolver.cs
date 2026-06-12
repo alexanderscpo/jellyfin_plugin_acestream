@@ -19,7 +19,7 @@ namespace Jellyfin.Plugin.AceStream.Infrastructure.Engine;
 /// Concurrency: no coalescing in v1 — duplicate simultaneous plays of the same URL may each
 /// issue one engine round-trip (idempotent, cheap relative to the downstream probe).
 /// </remarks>
-public sealed class AceLiveResolver
+public sealed class AceLiveResolver : IAceLiveResolver
 {
     /// <summary>
     /// Default TTL for cached URL-to-Infohash mappings.
