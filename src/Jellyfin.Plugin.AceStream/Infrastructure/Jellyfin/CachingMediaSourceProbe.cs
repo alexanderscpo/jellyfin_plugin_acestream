@@ -81,24 +81,30 @@ public sealed class CachingMediaSourceProbe : IMediaSourceProbe
 
         // Coalesce concurrent misses: GetOrAdd with Lazy<Task> ensures only one inner-probe
         // Task is created per key even when multiple callers race through the miss path.
+        // The inner probe runs with CancellationToken.None so that an individual caller
+        // cancelling does not abort the shared task that other concurrent callers depend on.
+        // (MediaEncoderStreamProbe already bounds the probe with its own per-probe timeout CTS,
+        // so running with None here does not leave the probe unbounded.)
         var capturedSource = source;
-        var capturedCt = cancellationToken;
         var lazy = _inFlight.GetOrAdd(
             key,
             _ => new Lazy<Task<CacheEntry?>>(
-                () => RunProbeAsync(key, capturedSource, capturedCt),
+                () => RunProbeAsync(key, capturedSource, CancellationToken.None),
                 LazyThreadSafetyMode.ExecutionAndPublication));
 
         CacheEntry? result;
         try
         {
-            result = await lazy.Value.ConfigureAwait(false);
+            // Each caller awaits with its own token, so a cancelled caller surfaces
+            // OperationCanceledException immediately while the shared probe continues for others.
+            result = await lazy.Value.WaitAsync(cancellationToken).ConfigureAwait(false);
         }
         finally
         {
-            // Remove the in-flight entry now that the task is done (regardless of success/failure).
-            // A new miss will create a fresh Lazy on the next call.
-            _inFlight.TryRemove(key, out _);
+            // Value-keyed removal so that only the Lazy that finished removes itself.
+            // A stale caller's TryRemove cannot evict a brand-new Lazy inserted for the same key.
+            // All concurrent waiters call this; it is idempotent after the first removal.
+            _inFlight.TryRemove(new KeyValuePair<string, Lazy<Task<CacheEntry?>>>(key, lazy));
         }
 
         if (result is not null)

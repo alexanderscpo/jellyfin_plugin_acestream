@@ -240,6 +240,84 @@ public class CachingMediaSourceProbeTests
         Assert.Equal(1, inner.Calls); // still only one inner call
     }
 
+    // Cancellation-decoupling tests (Fix 1)
+
+    /// <summary>
+    /// When caller 1 cancels mid-probe, caller 2 (with a live token) must still receive the
+    /// enriched result. The inner probe must run exactly once.
+    /// </summary>
+    [Fact]
+    public async Task Caller1CancelsMidProbe_Caller2ReceivesResult_InnerProbeRanOnce()
+    {
+        var probeStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var probeProceed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        int innerCalls = 0;
+
+        var blockingProbe = new ScriptedProbe(async (source, ct) =>
+        {
+            Interlocked.Increment(ref innerCalls);
+            probeStarted.TrySetResult();
+            await probeProceed.Task; // block until the test unblocks us
+            source.MediaStreams = new List<MediaStream> { new() { Type = MediaStreamType.Video, Codec = "h264", Index = 0 } };
+            source.Bitrate = 5_000_000;
+            source.Container = "mpegts";
+        });
+
+        var (probe, _) = Build(blockingProbe);
+
+        using var cts1 = new CancellationTokenSource();
+        var s1 = Source();
+        var s2 = Source();
+
+        // Launch both callers before the probe finishes.
+        var t1 = probe.EnrichAsync(s1, cts1.Token);
+        var t2 = probe.EnrichAsync(s2, CancellationToken.None);
+
+        // Wait until the inner probe has actually started, then cancel caller 1.
+        await probeStarted.Task;
+        cts1.Cancel();
+
+        // Let the probe finish (unblock probeProceed).
+        probeProceed.TrySetResult();
+
+        // t1 should be cancelled; t2 should succeed.
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => t1);
+        await t2; // must not throw
+
+        Assert.Equal("h264", Assert.Single(s2.MediaStreams).Codec);
+        Assert.Equal(1, innerCalls);
+    }
+
+    /// <summary>
+    /// A caller whose own token is cancelled while it is awaiting the in-flight task
+    /// receives OperationCanceledException promptly.
+    /// </summary>
+    [Fact]
+    public async Task CallerTokenCancelled_WhileAwaiting_ThrowsOperationCanceledException()
+    {
+        var probeProceed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        var blockingProbe = new ScriptedProbe(async (source, _) =>
+        {
+            await probeProceed.Task;
+            source.MediaStreams = new List<MediaStream> { new() { Type = MediaStreamType.Video, Codec = "h264", Index = 0 } };
+        });
+
+        var (probe, _) = Build(blockingProbe);
+
+        using var cts = new CancellationTokenSource();
+        var s = Source();
+
+        var t = probe.EnrichAsync(s, cts.Token);
+        cts.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => t);
+
+        // Cleanup: let the background probe finish so no unobserved task exceptions remain.
+        probeProceed.TrySetResult();
+        await Task.Delay(50); // give the background task a tick to settle
+    }
+
     // Helper scripted probe for concurrency tests
     private sealed class ScriptedProbe : IMediaSourceProbe
     {
