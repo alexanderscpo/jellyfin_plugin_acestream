@@ -11,6 +11,11 @@ namespace Jellyfin.Plugin.AceStream.Infrastructure.Jellyfin;
 /// TTL is plenty. Only successful probes are cached: a dead channel or a failed probe is left
 /// uncached so the next play retries it. The cache key is the infohash (<see cref="MediaSourceInfo.Id"/>);
 /// only the codec fields are cached, never the per-request path or analyze duration.
+///
+/// Concurrent callers for the same key coalesce: the first caller runs the inner probe and all
+/// concurrent callers await the same in-flight task so ffprobe is invoked exactly once per key.
+/// Cached codec lists are stored as defensive copies so a consumer mutating the returned list
+/// does not corrupt the cache.
 /// </summary>
 public sealed class CachingMediaSourceProbe : IMediaSourceProbe
 {
@@ -18,7 +23,14 @@ public sealed class CachingMediaSourceProbe : IMediaSourceProbe
     private readonly IProbeCacheSettings _settings;
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<CachingMediaSourceProbe> _logger;
+
+    // Cached successful results (key = infohash).
     private readonly ConcurrentDictionary<string, CacheEntry> _cache = new(StringComparer.Ordinal);
+
+    // In-flight probes keyed by infohash. ConcurrentDictionary + Lazy<Task> ensures that
+    // concurrent misses for the same key share one inner-probe call.
+    private readonly ConcurrentDictionary<string, Lazy<Task<CacheEntry?>>> _inFlight =
+        new(StringComparer.Ordinal);
 
     /// <summary>
     /// Initializes a new instance of the <see cref="CachingMediaSourceProbe"/> class.
@@ -49,6 +61,8 @@ public sealed class CachingMediaSourceProbe : IMediaSourceProbe
         ArgumentNullException.ThrowIfNull(source);
 
         var key = source.Id;
+
+        // Fast path: valid cache entry.
         if (!string.IsNullOrEmpty(key)
             && _cache.TryGetValue(key, out var entry)
             && entry.ExpiresAt > _timeProvider.GetUtcNow())
@@ -58,22 +72,69 @@ public sealed class CachingMediaSourceProbe : IMediaSourceProbe
             return;
         }
 
+        if (string.IsNullOrEmpty(key))
+        {
+            // No key — delegate without caching.
+            await _inner.EnrichAsync(source, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        // Coalesce concurrent misses: GetOrAdd with Lazy<Task> ensures only one inner-probe
+        // Task is created per key even when multiple callers race through the miss path.
+        var capturedSource = source;
+        var capturedCt = cancellationToken;
+        var lazy = _inFlight.GetOrAdd(
+            key,
+            _ => new Lazy<Task<CacheEntry?>>(
+                () => RunProbeAsync(key, capturedSource, capturedCt),
+                LazyThreadSafetyMode.ExecutionAndPublication));
+
+        CacheEntry? result;
+        try
+        {
+            result = await lazy.Value.ConfigureAwait(false);
+        }
+        finally
+        {
+            // Remove the in-flight entry now that the task is done (regardless of success/failure).
+            // A new miss will create a fresh Lazy on the next call.
+            _inFlight.TryRemove(key, out _);
+        }
+
+        if (result is not null)
+        {
+            Apply(result.Value, source);
+        }
+    }
+
+    private async Task<CacheEntry?> RunProbeAsync(
+        string key,
+        MediaSourceInfo source,
+        CancellationToken cancellationToken)
+    {
         await _inner.EnrichAsync(source, cancellationToken).ConfigureAwait(false);
 
         var ttl = _settings.CodecCacheTtl;
-        if (ttl > TimeSpan.Zero && !string.IsNullOrEmpty(key) && source.MediaStreams is { Count: > 0 })
+        if (ttl > TimeSpan.Zero && source.MediaStreams is { Count: > 0 })
         {
-            _cache[key] = new CacheEntry(
-                source.MediaStreams,
+            // Defensive copy: store an independent list so consumer mutations do not corrupt cache.
+            var entry = new CacheEntry(
+                source.MediaStreams.ToList(),
                 source.Bitrate,
                 source.Container,
                 _timeProvider.GetUtcNow() + ttl);
+
+            _cache[key] = entry;
+            return entry;
         }
+
+        return null;
     }
 
     private static void Apply(CacheEntry entry, MediaSourceInfo source)
     {
-        source.MediaStreams = entry.Streams;
+        // Assign a new list built from the stored copy so each caller gets its own instance.
+        source.MediaStreams = entry.Streams.ToList();
         source.Bitrate = entry.Bitrate;
         source.Container = entry.Container;
     }

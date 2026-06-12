@@ -149,4 +149,105 @@ public class CachingMediaSourceProbeTests
 
         Assert.Equal(2, inner.Calls);
     }
+
+    // Concurrent-miss coalescing tests
+    [Fact]
+    public async Task ConcurrentMiss_SameKey_InnerProbeRunsOnce()
+    {
+        var gate = new TaskCompletionSource();
+        int innerCalls = 0;
+
+        var blockingProbe = new ScriptedProbe(async (source, ct) =>
+        {
+            Interlocked.Increment(ref innerCalls);
+            await gate.Task.WaitAsync(ct);
+            source.MediaStreams = new List<MediaStream> { new() { Type = MediaStreamType.Video, Codec = "h264", Index = 0 } };
+            source.Bitrate = 1_000_000;
+            source.Container = "mpegts";
+        });
+
+        var (probe, _) = Build(blockingProbe);
+
+        // Launch two concurrent enrichments for the same key; both arrive before gate opens.
+        var t1 = probe.EnrichAsync(Source(), CancellationToken.None);
+        var t2 = probe.EnrichAsync(Source(), CancellationToken.None);
+
+        gate.SetResult(); // let the probe proceed
+        await Task.WhenAll(t1, t2);
+
+        // The inner probe should have been invoked exactly once despite two concurrent misses.
+        Assert.Equal(1, innerCalls);
+    }
+
+    [Fact]
+    public async Task ConcurrentMiss_SameKey_BothCallersReceiveCodecs()
+    {
+        var gate = new TaskCompletionSource();
+
+        var blockingProbe = new ScriptedProbe(async (source, ct) =>
+        {
+            await gate.Task.WaitAsync(ct);
+            source.MediaStreams = new List<MediaStream> { new() { Type = MediaStreamType.Video, Codec = "h264", Index = 0 } };
+            source.Bitrate = 5_000_000;
+            source.Container = "mpegts";
+        });
+
+        var (probe, _) = Build(blockingProbe);
+
+        var s1 = Source();
+        var s2 = Source();
+        var t1 = probe.EnrichAsync(s1, CancellationToken.None);
+        var t2 = probe.EnrichAsync(s2, CancellationToken.None);
+
+        gate.SetResult();
+        await Task.WhenAll(t1, t2);
+
+        Assert.Equal("h264", Assert.Single(s1.MediaStreams).Codec);
+        Assert.Equal("h264", Assert.Single(s2.MediaStreams).Codec);
+    }
+
+    // Defensive copy test
+    [Fact]
+    public async Task CacheHit_MutationByConsumer_DoesNotLeakIntoSubsequentHits()
+    {
+        var inner = new CountingProbe(succeeds: true);
+        var (probe, _) = Build(inner);
+
+        // Prime the cache.
+        var s1 = Source();
+        await probe.EnrichAsync(s1, CancellationToken.None);
+
+        // First hit — mutate the returned list in-place.
+        var s2 = Source();
+        await probe.EnrichAsync(s2, CancellationToken.None);
+        // Mutate the list that was assigned to s2.MediaStreams
+        if (s2.MediaStreams is List<MediaStream> list)
+        {
+            list.Add(new MediaStream { Type = MediaStreamType.Audio, Codec = "aac", Index = 1 });
+        }
+        else
+        {
+            // If already read-only the mutation test is still meaningful below
+            s2.MediaStreams = s2.MediaStreams.Concat(new[] { new MediaStream { Type = MediaStreamType.Audio, Codec = "aac", Index = 1 } }).ToList();
+        }
+
+        // Second hit — should return the original one stream, unaffected by s2's mutation.
+        var s3 = Source();
+        await probe.EnrichAsync(s3, CancellationToken.None);
+
+        Assert.Equal(1, s3.MediaStreams.Count);
+        Assert.Equal("h264", s3.MediaStreams[0].Codec);
+        Assert.Equal(1, inner.Calls); // still only one inner call
+    }
+
+    // Helper scripted probe for concurrency tests
+    private sealed class ScriptedProbe : IMediaSourceProbe
+    {
+        private readonly Func<MediaSourceInfo, CancellationToken, Task> _body;
+
+        public ScriptedProbe(Func<MediaSourceInfo, CancellationToken, Task> body) => _body = body;
+
+        public Task EnrichAsync(MediaSourceInfo source, CancellationToken cancellationToken)
+            => _body(source, cancellationToken);
+    }
 }
