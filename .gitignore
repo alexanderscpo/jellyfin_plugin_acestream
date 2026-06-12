@@ -11,3 +11,6 @@
 # Agent-local / machine-specific
 .claude/settings.local.json
 .atl/.skill-registry.cache.json
+
+# Local tooling metadata
+.atl/
