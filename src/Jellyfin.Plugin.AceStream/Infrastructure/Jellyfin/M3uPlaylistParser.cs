@@ -84,10 +84,21 @@ public static class M3uPlaylistParser
         return new ParsedPlaylist(channels, aceLive);
     }
 
+    private static Uri? TryParseHttpUrl(string line)
+    {
+        if (!line.StartsWith(HttpScheme, StringComparison.OrdinalIgnoreCase) &&
+            !line.StartsWith(HttpsScheme, StringComparison.OrdinalIgnoreCase))
+            return null;
+        try { return new Uri(line); }
+        catch (UriFormatException) { return null; }
+    }
+
     private static bool IsAceLiveUrl(string line)
-        => (line.StartsWith(HttpScheme, StringComparison.OrdinalIgnoreCase) ||
-            line.StartsWith(HttpsScheme, StringComparison.OrdinalIgnoreCase)) &&
-           line.EndsWith(AceLiveExtension, StringComparison.OrdinalIgnoreCase);
+    {
+        var uri = TryParseHttpUrl(line);
+        return uri is not null &&
+               uri.AbsolutePath.EndsWith(AceLiveExtension, StringComparison.OrdinalIgnoreCase);
+    }
 
     /// <summary>
     /// Derives a display name from a URL when no <c>#EXTINF</c> name is available.
@@ -96,9 +107,9 @@ public static class M3uPlaylistParser
     /// </summary>
     private static string DeriveNameFromUrl(string url)
     {
-        try
+        var uri = TryParseHttpUrl(url);
+        if (uri is not null)
         {
-            var uri = new Uri(url);
             var segments = uri.Segments;
             if (segments.Length > 0)
             {
@@ -113,10 +124,6 @@ public static class M3uPlaylistParser
                     return last;
                 }
             }
-        }
-        catch (UriFormatException)
-        {
-            // fall through to full URL
         }
 
         return url;

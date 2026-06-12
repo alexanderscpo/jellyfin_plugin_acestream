@@ -187,4 +187,37 @@ public class M3uPlaylistParserTests
         var channel = Assert.Single(result.Channels);
         Assert.Equal("TVO", channel.Name);
     }
+
+    [Fact]
+    public void Parse_AceLiveUrl_WithQueryString_ReturnsEntryWithUrlIntact()
+    {
+        var m3u = "http://host/stream.acelive?token=abc";
+
+        var result = M3uPlaylistParser.Parse(m3u);
+
+        var entry = Assert.Single(result.AceLive);
+        Assert.Equal("http://host/stream.acelive?token=abc", entry.Url);
+    }
+
+    [Fact]
+    public void Parse_AceLiveUrl_WithFragment_ReturnsEntryWithUrlIntact()
+    {
+        var m3u = "https://host/feed.acelive#section";
+
+        var result = M3uPlaylistParser.Parse(m3u);
+
+        var entry = Assert.Single(result.AceLive);
+        Assert.Equal("https://host/feed.acelive#section", entry.Url);
+    }
+
+    [Fact]
+    public void Parse_NonAceLiveHttpUrl_WithQueryString_IsSkipped()
+    {
+        var m3u = "http://host/stream.m3u8?token=abc";
+
+        var result = M3uPlaylistParser.Parse(m3u);
+
+        Assert.Empty(result.AceLive);
+        Assert.Empty(result.Channels);
+    }
 }
