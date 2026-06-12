@@ -19,6 +19,44 @@ Watch AceStream channels inside Jellyfin. The plugin adds an **AceStream** chann
 
 A typical setup runs all three (Jellyfin, engine, acexy) as Docker containers on the same network.
 
+### Docker Compose example
+
+```yaml
+services:
+  jellyfin:
+    image: jellyfin/jellyfin
+    ports:
+      - "8096:8096"
+    volumes:
+      - ./jellyfin/config:/config
+      - ./jellyfin/cache:/cache
+    restart: unless-stopped
+
+  acestream:
+    image: wafy80/acestream
+    command: ["--client-console", "--bind-all"]
+    restart: unless-stopped
+
+  acexy:
+    image: ghcr.io/javinator9889/acexy
+    environment:
+      ACEXY_HOST: acestream
+      ACEXY_PORT: "6878"
+      ACEXY_LISTEN_ADDR: ":8080"
+    depends_on:
+      - acestream
+    restart: unless-stopped
+```
+
+Compose puts all services on one network with name-based DNS, so the plugin settings are simply:
+
+- **Engine URL** → `http://acestream:6878`
+- **Proxy URL** → `http://acexy:8080`
+
+Drop the plugin files into `./jellyfin/config/plugins/AceStream/` and restart the `jellyfin` container.
+
+> If your containers run on Docker's *default* bridge instead of a Compose/user-defined network, name-based DNS does not work — use published ports and `host.docker.internal` (with `extra_hosts: ["host.docker.internal:host-gateway"]`) in the URLs instead.
+
 ## Quick start
 
 1. Download `Jellyfin.Plugin.AceStream.dll` and `meta.json` (or [build from source](#build-from-source)).
