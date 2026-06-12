@@ -235,8 +235,8 @@ public class CachingMediaSourceProbeTests
         var s3 = Source();
         await probe.EnrichAsync(s3, CancellationToken.None);
 
-        Assert.Equal(1, s3.MediaStreams.Count);
-        Assert.Equal("h264", s3.MediaStreams[0].Codec);
+        var remaining = Assert.Single(s3.MediaStreams);
+        Assert.Equal("h264", remaining.Codec);
         Assert.Equal(1, inner.Calls); // still only one inner call
     }
 
