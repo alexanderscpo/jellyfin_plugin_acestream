@@ -1,6 +1,6 @@
 {
     "category": "Live TV",
-    "changelog": "Initial scaffold.",
+    "changelog": "First release: browse engine categories, custom channels from M3U playlist, codec probing gated on engine session readiness, hardened engine search (timeouts and fail-soft on missing config).",
     "description": "Browse, search and play AceStream channels.",
     "guid": "de5478ad-fc34-40f6-a6f6-83735591c297",
     "name": "AceStream",
