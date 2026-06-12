@@ -254,7 +254,25 @@ public class AceStreamChannelAceLiveTests
     }
 
     [Fact]
-    public async Task GetChannelItemMediaInfo_AceLiveId_EmptyMediaStreams_EvoidsAndReResolvesOnce()
+    public async Task GetChannelItemMediaInfo_AceLiveId_NoMatchingEntry_ReturnsEmpty()
+    {
+        // Coverage of existing correct behavior — no RED expected.
+        // The entry source is empty, so looking up any acelive: id yields nothing.
+        var infohash = Infohash.Create(Hash);
+        var resolver = new FakeAceLiveResolver(infohash);
+        var source = new FakeAceLiveEntrySource(); // empty
+        var channel = Channel(aceLiveSource: source, resolver: resolver);
+
+        // Construct an acelive id for a hash that has no entry in the source
+        var fakeId = $"acelive:{Hash}";
+
+        var mediaSources = await channel.GetChannelItemMediaInfo(fakeId, CancellationToken.None);
+
+        Assert.Empty(mediaSources);
+    }
+
+    [Fact]
+    public async Task GetChannelItemMediaInfo_AceLiveId_EmptyMediaStreams_EvictsAndReResolvesOnce()
     {
         // Probe returns empty MediaStreams on first enrich; resolver always returns the same hash.
         // The channel should evict + re-resolve exactly once.
@@ -271,12 +289,13 @@ public class AceStreamChannelAceLiveTests
 
         // Even though both enriches return empty streams, the result should not be empty
         // (we return what we have after one re-resolve attempt, per spec).
-        await channel.GetChannelItemMediaInfo(itemId, CancellationToken.None);
+        var result = (await channel.GetChannelItemMediaInfo(itemId, CancellationToken.None)).ToList();
 
         Assert.Equal(1, resolver.EvictCallCount);
         Assert.Equal(AceLiveUrl, resolver.LastEvictedUrl);
         Assert.Equal(2, resolver.ResolveCallCount); // first + one re-resolve
         Assert.Equal(2, probe.EnrichCallCount);     // first + one re-enrich
+        Assert.Single(result);
     }
 
     [Fact]
