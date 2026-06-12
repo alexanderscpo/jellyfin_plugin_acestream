@@ -33,7 +33,7 @@ public class CachingMediaSourceProbeTests
         }
     }
 
-    private sealed class FixedCacheSettings : IProbeCacheSettings
+    private sealed class FixedCacheSettings : IProbeSettings
     {
         public FixedCacheSettings(TimeSpan ttl) => CodecCacheTtl = ttl;
 

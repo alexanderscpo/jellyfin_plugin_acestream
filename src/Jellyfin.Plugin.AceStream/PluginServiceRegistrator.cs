@@ -39,7 +39,7 @@ public sealed class PluginServiceRegistrator : IPluginServiceRegistrator
         //  - MediaEncoderStreamProbe runs ffprobe (via Jellyfin's IMediaEncoder) for the real codecs.
         //  - ReadinessGatedProbe skips it when the channel is delivering no data.
         //  - CachingMediaSourceProbe caches a successful result so repeat plays skip both.
-        serviceCollection.AddSingleton<IProbeCacheSettings, PluginProbeCacheSettings>();
+        serviceCollection.AddSingleton<IProbeSettings, PluginProbeSettings>();
         serviceCollection.AddSingleton<MediaEncoderStreamProbe>();
         serviceCollection.AddSingleton<IMediaSourceProbe>(sp =>
         {
@@ -50,7 +50,7 @@ public sealed class PluginServiceRegistrator : IPluginServiceRegistrator
 
             return new CachingMediaSourceProbe(
                 gated,
-                sp.GetRequiredService<IProbeCacheSettings>(),
+                sp.GetRequiredService<IProbeSettings>(),
                 TimeProvider.System,
                 sp.GetRequiredService<ILogger<CachingMediaSourceProbe>>());
         });

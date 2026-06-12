@@ -1,9 +1,9 @@
 namespace Jellyfin.Plugin.AceStream.Infrastructure.Jellyfin;
 
 /// <summary>
-/// <see cref="IProbeCacheSettings"/> backed by the live plugin configuration.
+/// <see cref="IProbeSettings"/> backed by the live plugin configuration.
 /// </summary>
-public sealed class PluginProbeCacheSettings : IProbeCacheSettings
+public sealed class PluginProbeSettings : IProbeSettings
 {
     /// <inheritdoc />
     public int ProbeAnalyzeDurationMs => Plugin.Instance?.Configuration.ProbeAnalyzeDurationMs ?? 5000;

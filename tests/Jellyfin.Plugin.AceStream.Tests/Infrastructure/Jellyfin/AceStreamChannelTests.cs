@@ -46,7 +46,7 @@ public class AceStreamChannelTests
         public string BaseUrl { get; }
     }
 
-    private sealed class FakeProbeSettings : IProbeCacheSettings
+    private sealed class FakeProbeSettings : IProbeSettings
     {
         public FakeProbeSettings(int probeAnalyzeDurationMs = 5000, int codecCacheTtlMinutes = 5)
         {

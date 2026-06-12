@@ -4,7 +4,7 @@ namespace Jellyfin.Plugin.AceStream.Infrastructure.Jellyfin;
 /// Provides codec-probe and codec-cache configuration. Read per use so configuration changes
 /// take effect without restarting.
 /// </summary>
-public interface IProbeCacheSettings
+public interface IProbeSettings
 {
     /// <summary>
     /// Gets how long (in milliseconds) ffprobe analyzes a live stream when discovering codecs.

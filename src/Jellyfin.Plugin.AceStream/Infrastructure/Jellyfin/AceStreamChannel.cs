@@ -25,7 +25,7 @@ public sealed class AceStreamChannel : IChannel, IRequiresMediaInfoCallback
 
     private readonly ISearchPort _searchPort;
     private readonly IProxySettings _proxySettings;
-    private readonly IProbeCacheSettings _probeSettings;
+    private readonly IProbeSettings _probeSettings;
     private readonly IMediaSourceProbe _probe;
     private readonly ICustomChannelRepository _customChannels;
     private readonly ILogger<AceStreamChannel> _logger;
@@ -39,7 +39,7 @@ public sealed class AceStreamChannel : IChannel, IRequiresMediaInfoCallback
     /// <param name="probe">Probes the live stream so Jellyfin sees the real codecs.</param>
     /// <param name="customChannels">Provides user-defined channels from the M3U playlist config.</param>
     /// <param name="logger">The logger.</param>
-    public AceStreamChannel(ISearchPort searchPort, IProxySettings proxySettings, IProbeCacheSettings probeSettings, IMediaSourceProbe probe, ICustomChannelRepository customChannels, ILogger<AceStreamChannel> logger)
+    public AceStreamChannel(ISearchPort searchPort, IProxySettings proxySettings, IProbeSettings probeSettings, IMediaSourceProbe probe, ICustomChannelRepository customChannels, ILogger<AceStreamChannel> logger)
     {
         ArgumentNullException.ThrowIfNull(searchPort);
         ArgumentNullException.ThrowIfNull(proxySettings);

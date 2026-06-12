@@ -20,7 +20,7 @@ namespace Jellyfin.Plugin.AceStream.Infrastructure.Jellyfin;
 public sealed class CachingMediaSourceProbe : IMediaSourceProbe
 {
     private readonly IMediaSourceProbe _inner;
-    private readonly IProbeCacheSettings _settings;
+    private readonly IProbeSettings _settings;
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<CachingMediaSourceProbe> _logger;
 
@@ -41,7 +41,7 @@ public sealed class CachingMediaSourceProbe : IMediaSourceProbe
     /// <param name="logger">The logger.</param>
     public CachingMediaSourceProbe(
         IMediaSourceProbe inner,
-        IProbeCacheSettings settings,
+        IProbeSettings settings,
         TimeProvider timeProvider,
         ILogger<CachingMediaSourceProbe> logger)
     {
