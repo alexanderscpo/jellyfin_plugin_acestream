@@ -20,6 +20,7 @@ public sealed class AceStreamChannel : IChannel, IRequiresMediaInfoCallback
 {
     private const string CategoryPrefix = "category:";
     private const string CustomFolderId = "custom";
+    private const string DataVersionPrefix = "2-";
     private const int DefaultPageSize = 50;
 
     private readonly ISearchPort _searchPort;
@@ -72,7 +73,7 @@ public sealed class AceStreamChannel : IChannel, IRequiresMediaInfoCallback
         {
             var payload = string.Join('\n', _customChannels.GetAll().Select(c => c.Infohash.Value + '|' + c.Name));
             var hash = System.Security.Cryptography.SHA1.HashData(System.Text.Encoding.UTF8.GetBytes(payload));
-            return "2-" + Convert.ToHexString(hash);
+            return DataVersionPrefix + Convert.ToHexString(hash);
         }
     }
 
