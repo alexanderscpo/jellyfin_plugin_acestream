@@ -21,11 +21,15 @@ public class EngineSearchClientTests
     private sealed class FakeEngineSettings : IEngineSettings
     {
         public string BaseUrl => "http://engine:6878";
+
+        public int ReadinessTimeoutSeconds => 30;
     }
 
     private sealed class EmptyBaseUrlEngineSettings : IEngineSettings
     {
         public string BaseUrl => string.Empty;
+
+        public int ReadinessTimeoutSeconds => 30;
     }
 
     private static EngineSearchClient ClientReturning(

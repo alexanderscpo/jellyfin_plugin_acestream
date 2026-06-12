@@ -10,4 +10,7 @@ public interface IEngineSettings
     /// Gets the engine base URL (e.g. <c>http://engine:6878</c>).
     /// </summary>
     string BaseUrl { get; }
+
+    /// <summary>Gets the deadline (in seconds) for the engine session readiness check.</summary>
+    int ReadinessTimeoutSeconds { get; }
 }

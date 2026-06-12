@@ -32,6 +32,13 @@ public sealed class PluginConfiguration : BasePluginConfiguration
     public int CodecCacheTtlMinutes { get; set; } = 5;
 
     /// <summary>
+    /// Gets or sets how long (in seconds) to poll the engine session for "dl" status before
+    /// declaring the channel not ready. A cold AceStream session takes 15–25 s of prebuffering;
+    /// keep this above 30 s for best results. Set to 0 to fall back to fail-open immediately.
+    /// </summary>
+    public int ReadinessTimeoutSeconds { get; set; } = 30;
+
+    /// <summary>
     /// Gets or sets an M3U playlist with <c>acestream://</c> URIs that appear as a "Custom" folder
     /// in the channel browser. Standard <c>#EXTINF</c> headers are supported; entries with
     /// non-AceStream URLs or invalid infohashes are silently ignored.

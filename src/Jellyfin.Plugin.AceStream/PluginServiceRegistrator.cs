@@ -29,11 +29,10 @@ public sealed class PluginServiceRegistrator : IPluginServiceRegistrator
         serviceCollection.AddHttpClient(EngineSearchClient.HttpClientName);
         serviceCollection.AddSingleton<ISearchPort, EngineSearchClient>();
 
-        // Checks live readiness through acexy (the same path playback uses, so it shares the engine
-        // session) so a dead P2P channel is skipped fast instead of hanging the codec probe — the
-        // /search availability is only a stale snapshot.
-        serviceCollection.AddHttpClient(ProxyStreamReadiness.HttpClientName);
-        serviceCollection.AddSingleton<IStreamReadiness, ProxyStreamReadiness>();
+        // Checks live readiness by opening an engine session and polling its stat_url until "dl"
+        // so the codec probe is skipped fast on dead channels. Reuses the "AceEngine" named client
+        // already registered above; no additional named client registration is needed.
+        serviceCollection.AddSingleton<IStreamReadiness, EngineSessionReadiness>();
 
         // Probe pipeline (outermost first): cache -> readiness gate -> ffprobe.
         //  - MediaEncoderStreamProbe runs ffprobe (via Jellyfin's IMediaEncoder) for the real codecs.

@@ -30,6 +30,11 @@
                     <div class="fieldDescription">How long discovered codecs are cached per channel so repeat plays skip the readiness check and ffprobe. Set to 0 to disable the cache. Default 5.</div>
                 </div>
                 <div class="inputContainer">
+                    <label class="inputLabel inputLabelUnfocused" for="ReadinessTimeoutSeconds">Readiness timeout (seconds)</label>
+                    <input id="ReadinessTimeoutSeconds" name="ReadinessTimeoutSeconds" type="number" min="0" step="5" is="emby-input" />
+                    <div class="fieldDescription">How long to wait for the AceStream engine session to reach "downloading" state before the channel is declared not ready and the codec probe is skipped. A cold start takes 15–25 s; keep above 30 for best results. Default 30.</div>
+                </div>
+                <div class="inputContainer">
                     <label class="inputLabel inputLabelUnfocused" for="M3uPlaylist">Custom channels (M3U playlist)</label>
                     <textarea id="M3uPlaylist" name="M3uPlaylist" is="emby-textarea" rows="10" style="font-family:monospace;width:100%;resize:vertical"></textarea>
                     <div class="fieldDescription">Paste an M3U playlist with <code>acestream://</code> URIs. Channels appear in a "Custom" folder in the browser. Standard <code>#EXTINF</code> headers are supported; non-AceStream entries are ignored.</div>
@@ -52,6 +57,7 @@
                     document.querySelector('#ProbeAnalyzeDurationMs').value = config.ProbeAnalyzeDurationMs || 5000;
                     document.querySelector('#CodecCacheTtlMinutes').value =
                         config.CodecCacheTtlMinutes != null ? config.CodecCacheTtlMinutes : 5;
+                    document.querySelector('#ReadinessTimeoutSeconds').value = config.ReadinessTimeoutSeconds != null ? config.ReadinessTimeoutSeconds : 30;
                     document.querySelector('#M3uPlaylist').value = config.M3uPlaylist || '';
                     Dashboard.hideLoadingMsg();
                 });
@@ -66,6 +72,8 @@
                     config.ProbeAnalyzeDurationMs = parseInt(document.querySelector('#ProbeAnalyzeDurationMs').value, 10) || 5000;
                     var ttl = parseInt(document.querySelector('#CodecCacheTtlMinutes').value, 10);
                     config.CodecCacheTtlMinutes = isNaN(ttl) ? 5 : ttl; // 0 means "disable cache", so don't coalesce
+                    var rts = parseInt(document.querySelector('#ReadinessTimeoutSeconds').value, 10);
+                    config.ReadinessTimeoutSeconds = isNaN(rts) ? 30 : rts;
                     config.M3uPlaylist = document.querySelector('#M3uPlaylist').value;
                     ApiClient.updatePluginConfiguration(pluginId, config).then(function (result) {
                         Dashboard.processPluginConfigurationUpdateResult(result);
