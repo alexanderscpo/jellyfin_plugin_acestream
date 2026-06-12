@@ -1,13 +1,13 @@
 {
     "category": "Live TV",
-    "changelog": "First release: browse engine categories, custom channels from M3U playlist, codec probing gated on engine session readiness, hardened engine search (timeouts and fail-soft on missing config).",
+    "changelog": "Add .acelive transport-file URLs as first-class Custom playlist entries: the plugin resolves the live infohash automatically at playback, with TTL caching and rotation recovery.",
     "description": "Browse, search and play AceStream channels.",
     "guid": "de5478ad-fc34-40f6-a6f6-83735591c297",
     "name": "AceStream",
     "overview": "AceStream channels in Jellyfin",
     "owner": "alexanderscpo",
     "targetAbi": "10.11.0.0",
-    "timestamp": "2026-06-06T00:00:00Z",
-    "version": "0.1.0.0",
+    "timestamp": "2026-06-12T00:00:00Z",
+    "version": "0.2.0.0",
     "assemblyFileName": "Jellyfin.Plugin.AceStream.dll"
 }
