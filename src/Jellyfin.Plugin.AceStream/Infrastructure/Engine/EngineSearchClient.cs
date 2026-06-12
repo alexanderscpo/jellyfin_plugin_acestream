@@ -173,7 +173,7 @@ public sealed class EngineSearchClient : ISearchPort
             channel = new AceChannel(
                 Infohash.Create(item.Infohash),
                 item.Name,
-                item.Status.ToChannelStatus(),
+                EngineStatusMapper.Map(item.Status),
                 Availability.Create(Math.Clamp(item.Availability, 0.0, 1.0)),
                 item.Categories ?? (IReadOnlyList<string>)Array.Empty<string>(),
                 item.Disabled,

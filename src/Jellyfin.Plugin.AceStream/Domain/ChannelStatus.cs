@@ -15,21 +15,3 @@ public enum ChannelStatus
     Working = 2,
 }
 
-/// <summary>
-/// Mapping helpers between raw engine status codes and <see cref="ChannelStatus"/>.
-/// </summary>
-public static class ChannelStatusExtensions
-{
-    /// <summary>
-    /// Maps a raw engine <c>status</c> code to a <see cref="ChannelStatus"/>.
-    /// Unknown codes map to <see cref="ChannelStatus.Unknown"/>.
-    /// </summary>
-    /// <param name="code">The raw engine status code (2 = working, 1 = unreliable).</param>
-    /// <returns>The corresponding <see cref="ChannelStatus"/>.</returns>
-    public static ChannelStatus ToChannelStatus(this int code) => code switch
-    {
-        1 => ChannelStatus.Unreliable,
-        2 => ChannelStatus.Working,
-        _ => ChannelStatus.Unknown,
-    };
-}
