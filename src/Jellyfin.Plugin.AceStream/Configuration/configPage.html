@@ -37,8 +37,8 @@
                 <div class="inputContainer">
                     <label class="inputLabel inputLabelUnfocused" for="M3uPlaylist">Custom channels (M3U playlist)</label>
                     <textarea id="M3uPlaylist" name="M3uPlaylist" is="emby-textarea" rows="10" style="font-family:monospace;width:100%;resize:vertical"></textarea>
-                    <div class="fieldDescription">Paste an M3U playlist with <code>acestream://</code> URIs. Channels appear in a "Custom" folder in the browser. Standard <code>#EXTINF</code> headers are supported; non-AceStream entries are ignored.</div>
-                    <div class="fieldDescription">Each URI must contain the stream's <strong>infohash</strong> (the 40-hex id public channel lists already use). For your own broadcasts, note that the engine's <code>get_content_id</code> value is <strong>not</strong> the infohash and will not play; get the infohash by opening the transport file once via <code>/ace/getstream?url=&lt;.acelive URL&gt;&amp;format=json</code> and reading the <code>infohash</code> field of the response.</div>
+                    <div class="fieldDescription">Paste an M3U playlist with <code>acestream://</code> URIs and/or <code>http(s)</code> URLs pointing to <code>.acelive</code> transport files. Channels appear in a "Custom" folder in the browser. Standard <code>#EXTINF</code> headers are supported; other entries are ignored.</div>
+                    <div class="fieldDescription"><code>.acelive</code> URLs are resolved automatically on play — recommended for private broadcasts. If you use a raw 40-hex id instead, it must be the stream's <strong>infohash</strong>; the engine's <code>get_content_id</code> value is <strong>not</strong> the infohash and will not play.</div>
                 </div>
                 <button is="emby-button" type="submit" class="raised button-submit block emby-button">
                     <span>Save</span>
