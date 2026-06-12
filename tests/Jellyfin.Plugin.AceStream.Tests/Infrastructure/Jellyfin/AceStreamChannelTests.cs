@@ -1,5 +1,6 @@
 using Jellyfin.Plugin.AceStream.Application;
 using Jellyfin.Plugin.AceStream.Domain;
+using Jellyfin.Plugin.AceStream.Infrastructure.Engine;
 using Jellyfin.Plugin.AceStream.Infrastructure.Jellyfin;
 using Jellyfin.Plugin.AceStream.Infrastructure.Proxy;
 using MediaBrowser.Controller.Channels;
@@ -22,6 +23,19 @@ public class AceStreamChannelTests
         public FakeCustomChannelRepository(params CustomChannel[] channels) => _channels = channels;
 
         public IReadOnlyList<CustomChannel> GetAll() => _channels;
+    }
+
+    private sealed class NoOpAceLiveEntrySource : IAceLiveEntrySource
+    {
+        public IReadOnlyList<AceLiveEntry> GetAceLiveEntries() => Array.Empty<AceLiveEntry>();
+    }
+
+    private sealed class NoOpAceLiveResolver : IAceLiveResolver
+    {
+        public Task<Infohash?> ResolveAsync(string url, CancellationToken cancellationToken)
+            => Task.FromResult<Infohash?>(null);
+
+        public void Evict(string url) { }
     }
 
     private sealed class FakeSearchPort : ISearchPort
@@ -101,7 +115,15 @@ public class AceStreamChannelTests
         var searchPort = port ?? new FakeSearchPort(searchResult ?? new SearchResult(0, Array.Empty<AceChannel>()));
         var proxySettings = new FakeProxySettings(proxyUrl);
         var probeSettings = new FakeProbeSettings(probeAnalyzeDurationMs);
-        return new AceStreamChannel(searchPort, proxySettings, probeSettings, probe ?? new FakeMediaSourceProbe(), customChannels ?? new FakeCustomChannelRepository(), NullLogger<AceStreamChannel>.Instance);
+        return new AceStreamChannel(
+            searchPort,
+            proxySettings,
+            probeSettings,
+            probe ?? new FakeMediaSourceProbe(),
+            customChannels ?? new FakeCustomChannelRepository(),
+            new NoOpAceLiveEntrySource(),
+            new NoOpAceLiveResolver(),
+            NullLogger<AceStreamChannel>.Instance);
     }
 
     [Fact]

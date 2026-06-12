@@ -55,15 +55,30 @@ public sealed class PluginServiceRegistrator : IPluginServiceRegistrator
         });
 
         // Lazily resolves .acelive transport-file URLs to live infohashes with a TTL cache.
-        // Registered now so PR2 only needs to inject it into AceStreamChannel without touching
-        // this file again. The singleton is safe: it is stateless except for its in-memory
-        // cache, which is intentional and thread-safe (ConcurrentDictionary).
         serviceCollection.AddSingleton<IAceLiveResolver, AceLiveResolver>();
 
         // User-defined channels from the M3U playlist in plugin settings.
-        serviceCollection.AddSingleton<ICustomChannelRepository, PluginCustomChannelRepository>();
+        // PluginCustomChannelRepository implements both ICustomChannelRepository (Application port)
+        // and IAceLiveEntrySource (Infrastructure side-channel). Register the concrete type once as
+        // a singleton, then expose both interfaces pointing to the same instance (ISP-safe and DRY).
+        serviceCollection.AddSingleton<PluginCustomChannelRepository>();
+        serviceCollection.AddSingleton<ICustomChannelRepository>(
+            sp => sp.GetRequiredService<PluginCustomChannelRepository>());
+        serviceCollection.AddSingleton<IAceLiveEntrySource>(
+            sp => sp.GetRequiredService<PluginCustomChannelRepository>());
 
         // Jellyfin does not auto-register plugin IChannel implementations; register it explicitly.
-        serviceCollection.AddSingleton<IChannel, AceStreamChannel>();
+        // Use an explicit factory so both ICustomChannelRepository and IAceLiveEntrySource are
+        // injected without ambiguity (both resolve to the same PluginCustomChannelRepository
+        // singleton, but DI cannot auto-wire two interfaces from one concrete type without guidance).
+        serviceCollection.AddSingleton<IChannel>(sp => new AceStreamChannel(
+            sp.GetRequiredService<ISearchPort>(),
+            sp.GetRequiredService<IProxySettings>(),
+            sp.GetRequiredService<IProbeSettings>(),
+            sp.GetRequiredService<IMediaSourceProbe>(),
+            sp.GetRequiredService<ICustomChannelRepository>(),
+            sp.GetRequiredService<IAceLiveEntrySource>(),
+            sp.GetRequiredService<IAceLiveResolver>(),
+            sp.GetRequiredService<ILogger<AceStreamChannel>>()));
     }
 }
