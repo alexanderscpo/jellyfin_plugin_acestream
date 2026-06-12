@@ -24,6 +24,14 @@ public sealed class EngineSearchClient : ISearchPort
 
     private const int MaxPageSize = 200;
 
+    /// <summary>
+    /// Per-request timeout applied on top of the caller's token. The engine's HTTP client has no
+    /// explicit timeout (inherits HttpClient's 100 s default), so we guard here: if the engine
+    /// accepts the connection but stalls, the linked CTS fires after this window and we degrade
+    /// to an empty result rather than letting a TaskCanceledException escape to the channel browser.
+    /// </summary>
+    private static readonly TimeSpan DefaultSearchTimeout = TimeSpan.FromSeconds(15);
+
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
@@ -33,6 +41,7 @@ public sealed class EngineSearchClient : ISearchPort
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly IEngineSettings _settings;
     private readonly ILogger<EngineSearchClient> _logger;
+    private readonly TimeSpan _searchTimeout;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="EngineSearchClient"/> class.
@@ -40,10 +49,12 @@ public sealed class EngineSearchClient : ISearchPort
     /// <param name="httpClientFactory">Creates the HTTP client used to call the engine, per request.</param>
     /// <param name="settings">Provides the current engine base URL.</param>
     /// <param name="logger">The logger.</param>
+    /// <param name="searchTimeout">Per-request timeout; defaults to 15 s when omitted.</param>
     public EngineSearchClient(
         IHttpClientFactory httpClientFactory,
         IEngineSettings settings,
-        ILogger<EngineSearchClient> logger)
+        ILogger<EngineSearchClient> logger,
+        TimeSpan? searchTimeout = null)
     {
         ArgumentNullException.ThrowIfNull(httpClientFactory);
         ArgumentNullException.ThrowIfNull(settings);
@@ -51,6 +62,7 @@ public sealed class EngineSearchClient : ISearchPort
         _httpClientFactory = httpClientFactory;
         _settings = settings;
         _logger = logger;
+        _searchTimeout = searchTimeout ?? DefaultSearchTimeout;
     }
 
     /// <inheritdoc />
@@ -65,14 +77,28 @@ public sealed class EngineSearchClient : ISearchPort
         }
 
         var url = BuildRequestUrl(baseUrl, request);
+
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(_searchTimeout);
+
         try
         {
             var httpClient = _httpClientFactory.CreateClient(HttpClientName);
             var dto = await httpClient
-                .GetFromJsonAsync<SearchResponseDto>(url, JsonOptions, cancellationToken)
+                .GetFromJsonAsync<SearchResponseDto>(url, JsonOptions, timeout.Token)
                 .ConfigureAwait(false);
 
             return Map(dto);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            // The engine accepted the connection but stalled past the per-request timeout.
+            // Degrade to an empty page rather than breaking the channel browser.
+            _logger.LogWarning(
+                "AceStream search timed out after {Timeout}s for {Url}; returning empty result.",
+                _searchTimeout.TotalSeconds,
+                url);
+            return new SearchResult(0, Array.Empty<AceChannel>());
         }
         catch (Exception ex) when (ex is HttpRequestException or JsonException)
         {

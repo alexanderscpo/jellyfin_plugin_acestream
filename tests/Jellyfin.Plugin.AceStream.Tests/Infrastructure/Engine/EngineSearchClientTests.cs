@@ -160,4 +160,28 @@ public class EngineSearchClientTests
         await Assert.ThrowsAnyAsync<OperationCanceledException>(
             () => client.SearchAsync(new SearchRequest { Query = "tv" }, cts.Token));
     }
+
+    [Fact]
+    public async Task SearchAsync_EngineHangs_ReturnsEmptyResult()
+    {
+        // Engine accepts the connection but never responds — caller token is NOT cancelled.
+        // The per-request timeout must fire, and SearchAsync must degrade to an empty result
+        // rather than letting the TaskCanceledException escape.
+        var handler = new ScriptedHttpMessageHandler(async (_, ct) =>
+        {
+            await Task.Delay(Timeout.Infinite, ct);
+            return new HttpResponseMessage(System.Net.HttpStatusCode.OK);
+        });
+        var factory = new FakeHttpClientFactory(handler);
+        var client = new EngineSearchClient(
+            factory,
+            new FakeEngineSettings(),
+            NullLogger<EngineSearchClient>.Instance,
+            searchTimeout: TimeSpan.FromMilliseconds(100));
+
+        var result = await client.SearchAsync(new SearchRequest { Query = "tv" }, CancellationToken.None);
+
+        Assert.Equal(0, result.Total);
+        Assert.Empty(result.Channels);
+    }
 }
