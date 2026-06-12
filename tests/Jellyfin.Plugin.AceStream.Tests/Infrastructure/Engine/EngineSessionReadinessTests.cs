@@ -244,4 +244,189 @@ public class EngineSessionReadinessTests
         Assert.DoesNotContain(requestedUris, u => u.Contains("/ace/cmd/", StringComparison.OrdinalIgnoreCase));
         Assert.DoesNotContain(requestedUris, u => u.Contains("method=stop", StringComparison.OrdinalIgnoreCase));
     }
+
+    // ── Fix 1: per-request timeout ────────────────────────────────────────────
+
+    /// <summary>
+    /// Engine hangs indefinitely on getstream; caller token is live; per-request bound fires.
+    /// Must fail open (return true) without throwing.
+    /// </summary>
+    [Fact]
+    public async Task IsReadyAsync_EngineHangs_OnGetStream_PerRequestTimeoutFires_FailsOpenTrue()
+    {
+        // Handler delays forever (honoring its cancellation token so the test is not slow).
+        var handler = new ScriptedHttpMessageHandler(async (_, ct) =>
+        {
+            await Task.Delay(Timeout.Infinite, ct);
+            return Json(string.Empty);
+        });
+
+        // Inject a very short per-request timeout so the test does not wait long.
+        var sut = new EngineSessionReadiness(
+            new FakeHttpClientFactory(handler),
+            new FixedEngineSettings(EngineBaseUrl),
+            NullLogger<EngineSessionReadiness>.Instance,
+            readinessTimeout: TimeSpan.FromSeconds(5),
+            pollInterval: TimeSpan.FromMilliseconds(15),
+            perRequestTimeout: TimeSpan.FromMilliseconds(80));
+
+        var ready = await sut.IsReadyAsync(Infohash.Create(Hash), CancellationToken.None);
+
+        Assert.True(ready);
+    }
+
+    /// <summary>
+    /// Engine hangs indefinitely on a stat poll; caller token is live; per-request bound fires.
+    /// Must fail open (return true) without throwing.
+    /// </summary>
+    [Fact]
+    public async Task IsReadyAsync_EngineHangs_OnStatPoll_PerRequestTimeoutFires_FailsOpenTrue()
+    {
+        var statCallCount = 0;
+        var handler = new ScriptedHttpMessageHandler(async (req, ct) =>
+        {
+            if (req.RequestUri!.AbsolutePath.Contains("getstream"))
+            {
+                return Json(GetStreamResponseWithStat);
+            }
+
+            statCallCount++;
+            // First stat poll hangs forever (honoring ct so the test is not slow).
+            await Task.Delay(Timeout.Infinite, ct);
+            return Json(string.Empty);
+        });
+
+        var sut = new EngineSessionReadiness(
+            new FakeHttpClientFactory(handler),
+            new FixedEngineSettings(EngineBaseUrl),
+            NullLogger<EngineSessionReadiness>.Instance,
+            readinessTimeout: TimeSpan.FromSeconds(5),
+            pollInterval: TimeSpan.FromMilliseconds(15),
+            perRequestTimeout: TimeSpan.FromMilliseconds(80));
+
+        var ready = await sut.IsReadyAsync(Infohash.Create(Hash), CancellationToken.None);
+
+        Assert.True(ready);
+        Assert.True(statCallCount >= 1, "Expected at least one stat poll to have been attempted.");
+    }
+
+    // ── Fix 2 + 4: zero/negative timeout and settings-sourced path ────────────
+
+    private sealed class ConfigurableEngineSettings : IEngineSettings
+    {
+        public ConfigurableEngineSettings(string baseUrl, int readinessTimeoutSeconds)
+        {
+            BaseUrl = baseUrl;
+            ReadinessTimeoutSeconds = readinessTimeoutSeconds;
+        }
+
+        public string BaseUrl { get; }
+
+        public int ReadinessTimeoutSeconds { get; }
+    }
+
+    /// <summary>
+    /// When IEngineSettings.ReadinessTimeoutSeconds == 0 and no override is provided,
+    /// the effective timeout is zero and the probe should fail open immediately without
+    /// making any HTTP calls.
+    /// </summary>
+    [Fact]
+    public async Task IsReadyAsync_SettingsTimeoutZero_FailsOpenImmediately_NoHttpCalls()
+    {
+        var handler = new ScriptedHttpMessageHandler((_, _) =>
+            throw new InvalidOperationException("should not be called"));
+
+        var sut = new EngineSessionReadiness(
+            new FakeHttpClientFactory(handler),
+            new ConfigurableEngineSettings(EngineBaseUrl, readinessTimeoutSeconds: 0),
+            NullLogger<EngineSessionReadiness>.Instance);
+
+        var ready = await sut.IsReadyAsync(Infohash.Create(Hash), CancellationToken.None);
+
+        Assert.True(ready);
+        Assert.Equal(0, handler.RequestCount);
+    }
+
+    /// <summary>
+    /// When IEngineSettings.ReadinessTimeoutSeconds is negative, the behavior should be the
+    /// same as zero: fail open immediately without making any HTTP calls.
+    /// </summary>
+    [Fact]
+    public async Task IsReadyAsync_SettingsTimeoutNegative_FailsOpenImmediately_NoHttpCalls()
+    {
+        var handler = new ScriptedHttpMessageHandler((_, _) =>
+            throw new InvalidOperationException("should not be called"));
+
+        var sut = new EngineSessionReadiness(
+            new FakeHttpClientFactory(handler),
+            new ConfigurableEngineSettings(EngineBaseUrl, readinessTimeoutSeconds: -1),
+            NullLogger<EngineSessionReadiness>.Instance);
+
+        var ready = await sut.IsReadyAsync(Infohash.Create(Hash), CancellationToken.None);
+
+        Assert.True(ready);
+        Assert.Equal(0, handler.RequestCount);
+    }
+
+    /// <summary>
+    /// When no readinessTimeout override is provided and settings return a positive value,
+    /// the settings-sourced timeout is used and the probe runs normally.
+    /// </summary>
+    [Fact]
+    public async Task IsReadyAsync_SettingsTimeoutUsed_WhenOverrideAbsent_ProbeRuns()
+    {
+        var handler = new ScriptedHttpMessageHandler((req, _) =>
+        {
+            if (req.RequestUri!.AbsolutePath.Contains("getstream"))
+            {
+                return Task.FromResult(Json(GetStreamResponseWithStat));
+            }
+
+            return Task.FromResult(Json(StatDl));
+        });
+
+        // No readinessTimeout override; settings provide 2 seconds.
+        var sut = new EngineSessionReadiness(
+            new FakeHttpClientFactory(handler),
+            new ConfigurableEngineSettings(EngineBaseUrl, readinessTimeoutSeconds: 2),
+            NullLogger<EngineSessionReadiness>.Instance,
+            pollInterval: TimeSpan.FromMilliseconds(15));
+
+        var ready = await sut.IsReadyAsync(Infohash.Create(Hash), CancellationToken.None);
+
+        Assert.True(ready);
+    }
+
+    // ── Fix 5: unparseable/relative stat_url → fail open ─────────────────────
+
+    /// <summary>
+    /// When the engine echoes a stat_url that cannot be parsed as an absolute URI (e.g. a truly
+    /// relative path like "ace/stat/HASH/sess" with no leading slash), RebuildUrl in the old code
+    /// returned the raw string as-is. HttpClient.GetFromJsonAsync then threw
+    /// InvalidOperationException because it can't use a relative URI without a BaseAddress.
+    /// The class must now handle this gracefully and fail open.
+    /// </summary>
+    [Fact]
+    public async Task IsReadyAsync_UnparseableStatUrl_FailsOpenTrue()
+    {
+        // stat_url with no scheme and no leading slash — TryCreate(UriKind.Absolute) returns false.
+        const string RelativeStatUrlResponse = """
+            {"response":{"infohash":"HASH","stat_url":"ace/stat/HASH/sess","playback_url":null},"error":null}
+            """;
+
+        var handler = new ScriptedHttpMessageHandler((req, _) =>
+        {
+            if (req.RequestUri!.AbsolutePath.Contains("getstream"))
+            {
+                return Task.FromResult(Json(RelativeStatUrlResponse));
+            }
+
+            // Should never be reached; the stat poll must not happen.
+            throw new InvalidOperationException("Unexpected HTTP call with unparseable stat_url");
+        });
+
+        var ready = await ReadinessOver(handler).IsReadyAsync(Infohash.Create(Hash), CancellationToken.None);
+
+        Assert.True(ready);
+    }
 }

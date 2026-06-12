@@ -16,7 +16,14 @@ namespace Jellyfin.Plugin.AceStream.Infrastructure.Engine;
 /// </summary>
 public sealed class EngineSessionReadiness : IStreamReadiness
 {
-    private static readonly TimeSpan DefaultReadinessTimeout = TimeSpan.FromSeconds(30);
+    /// <summary>
+    /// Per-request timeout applied on top of the caller's token. Guards against an engine that
+    /// accepts the connection but stalls: the linked CTS fires after this window and we treat the
+    /// request as a transient failure (fail open) rather than letting a TaskCanceledException
+    /// escape upward. Mirrors the pattern used in <see cref="EngineSearchClient"/>.
+    /// </summary>
+    private static readonly TimeSpan DefaultPerRequestTimeout = TimeSpan.FromSeconds(10);
+
     private static readonly TimeSpan DefaultPollInterval = TimeSpan.FromSeconds(2);
 
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -30,6 +37,7 @@ public sealed class EngineSessionReadiness : IStreamReadiness
     private readonly ILogger<EngineSessionReadiness> _logger;
     private readonly TimeSpan _readinessTimeout;
     private readonly TimeSpan _pollInterval;
+    private readonly TimeSpan _perRequestTimeout;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="EngineSessionReadiness"/> class.
@@ -39,12 +47,14 @@ public sealed class EngineSessionReadiness : IStreamReadiness
     /// <param name="logger">The logger.</param>
     /// <param name="readinessTimeout">Override the polling deadline; defaults to <see cref="IEngineSettings.ReadinessTimeoutSeconds"/> when omitted.</param>
     /// <param name="pollInterval">How long to wait between stat polls; defaults to 2 s when omitted.</param>
+    /// <param name="perRequestTimeout">Per-request HTTP timeout; defaults to 10 s when omitted.</param>
     public EngineSessionReadiness(
         IHttpClientFactory httpClientFactory,
         IEngineSettings settings,
         ILogger<EngineSessionReadiness> logger,
         TimeSpan? readinessTimeout = null,
-        TimeSpan? pollInterval = null)
+        TimeSpan? pollInterval = null,
+        TimeSpan? perRequestTimeout = null)
     {
         ArgumentNullException.ThrowIfNull(httpClientFactory);
         ArgumentNullException.ThrowIfNull(settings);
@@ -54,6 +64,7 @@ public sealed class EngineSessionReadiness : IStreamReadiness
         _logger = logger;
         _readinessTimeout = readinessTimeout ?? TimeSpan.FromSeconds(settings.ReadinessTimeoutSeconds);
         _pollInterval = pollInterval ?? DefaultPollInterval;
+        _perRequestTimeout = perRequestTimeout ?? DefaultPerRequestTimeout;
     }
 
     /// <inheritdoc />
@@ -65,6 +76,16 @@ public sealed class EngineSessionReadiness : IStreamReadiness
         if (string.IsNullOrWhiteSpace(baseUrl))
         {
             // No engine configured: fail open so the gate never blocks playback.
+            return true;
+        }
+
+        // ReadinessTimeoutSeconds == 0 (or negative) is documented as "fail open immediately".
+        if (_readinessTimeout <= TimeSpan.Zero)
+        {
+            _logger.LogDebug(
+                "AceStream readiness timeout is {Timeout}; failing open immediately for {Infohash}.",
+                _readinessTimeout,
+                infohash.Value);
             return true;
         }
 
@@ -82,6 +103,13 @@ public sealed class EngineSessionReadiness : IStreamReadiness
             // Rebuild against configured engine base so we route correctly regardless of what
             // host the engine echoed back in the response.
             var resolvedStatUrl = RebuildUrl(baseUrl, statUrl);
+            if (resolvedStatUrl is null)
+            {
+                _logger.LogWarning(
+                    "AceStream engine echoed a relative stat_url for {Infohash}; assuming ready.",
+                    infohash.Value);
+                return true;
+            }
 
             return await PollUntilReadyAsync(resolvedStatUrl, infohash, cancellationToken).ConfigureAwait(false);
         }
@@ -102,11 +130,26 @@ public sealed class EngineSessionReadiness : IStreamReadiness
         var url = $"{baseUrl.TrimEnd('/')}/ace/getstream?infohash={infohash.Value}&format=json";
         var httpClient = _httpClientFactory.CreateClient(EngineSearchClient.HttpClientName);
 
-        var dto = await httpClient
-            .GetFromJsonAsync<GetStreamResponseDto>(url, JsonOptions, cancellationToken)
-            .ConfigureAwait(false);
+        using var requestCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        requestCts.CancelAfter(_perRequestTimeout);
 
-        return dto?.Response?.StatUrl;
+        try
+        {
+            var dto = await httpClient
+                .GetFromJsonAsync<GetStreamResponseDto>(url, JsonOptions, requestCts.Token)
+                .ConfigureAwait(false);
+
+            return dto?.Response?.StatUrl;
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            // Per-request timeout fired; engine stalled. Return null so the caller fails open.
+            _logger.LogWarning(
+                "AceStream getstream timed out after {Timeout}s for {Infohash}; assuming ready.",
+                _perRequestTimeout.TotalSeconds,
+                infohash.Value);
+            return null;
+        }
     }
 
     private async Task<bool> PollUntilReadyAsync(string statUrl, Infohash infohash, CancellationToken cancellationToken)
@@ -121,14 +164,26 @@ public sealed class EngineSessionReadiness : IStreamReadiness
             StatResultDto? result;
             try
             {
+                using var requestCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                requestCts.CancelAfter(_perRequestTimeout);
+
                 var dto = await httpClient
-                    .GetFromJsonAsync<StatResponseDto>(statUrl, JsonOptions, cancellationToken)
+                    .GetFromJsonAsync<StatResponseDto>(statUrl, JsonOptions, requestCts.Token)
                     .ConfigureAwait(false);
                 result = dto?.Response;
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
                 throw;
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                // Per-request timeout fired on a stat poll; engine stalled. Fail open.
+                _logger.LogWarning(
+                    "AceStream stat poll timed out after {Timeout}s for {Infohash}; assuming ready.",
+                    _perRequestTimeout.TotalSeconds,
+                    infohash.Value);
+                return true;
             }
             catch (Exception ex) when (ex is HttpRequestException or JsonException)
             {
@@ -164,17 +219,21 @@ public sealed class EngineSessionReadiness : IStreamReadiness
     /// Rebuilds <paramref name="engineUrl"/> (which may use the engine's internal host/port) by
     /// replacing its scheme+host+port with those from <paramref name="root"/> (the configured base URL).
     /// Only the path and query are reused from the engine-echoed URL.
+    /// Returns <see langword="null"/> when <paramref name="engineUrl"/> is not an absolute URI
+    /// (e.g. a relative URL echoed by the engine), allowing the caller to fail open with a warning
+    /// rather than passing a bare relative path to <see cref="HttpClient"/> which would throw
+    /// <see cref="InvalidOperationException"/>.
     /// </summary>
-    internal static string RebuildUrl(string root, string engineUrl)
+    internal static string? RebuildUrl(string root, string engineUrl)
     {
         if (!Uri.TryCreate(engineUrl, UriKind.Absolute, out var echoed))
         {
-            return engineUrl;
+            return null;
         }
 
         if (!Uri.TryCreate(root.TrimEnd('/'), UriKind.Absolute, out var configured))
         {
-            return engineUrl;
+            return null;
         }
 
         var builder = new UriBuilder(configured.Scheme, configured.Host, configured.Port)
