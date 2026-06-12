@@ -75,4 +75,57 @@ public class AceChannelTests
         Assert.Empty(channel.Countries);
         Assert.Empty(channel.Languages);
     }
+
+    // operator == / != tests
+    [Fact]
+    public void EqualityOperator_SameInfohash_ReturnsTrue()
+    {
+        var a = Channel(HashA, name: "Alpha");
+        var b = Channel(HashA, name: "Beta");
+
+        Assert.True(a == b);
+        Assert.False(a != b);
+    }
+
+    [Fact]
+    public void EqualityOperator_DifferentInfohash_ReturnsFalse()
+    {
+        var a = Channel(HashA);
+        var b = Channel(HashB);
+
+        Assert.False(a == b);
+        Assert.True(a != b);
+    }
+
+    [Fact]
+    public void EqualityOperator_BothNull_ReturnsTrue()
+    {
+        AceChannel? left = null;
+        AceChannel? right = null;
+
+#pragma warning disable CS8604 // Nullability — intentional null comparison test
+        Assert.True(left == right);
+        Assert.False(left != right);
+#pragma warning restore CS8604
+    }
+
+    [Fact]
+    public void EqualityOperator_LeftNull_ReturnsFalse()
+    {
+        AceChannel? left = null;
+        var right = Channel(HashA);
+
+        Assert.False(left == right);
+        Assert.True(left != right);
+    }
+
+    [Fact]
+    public void EqualityOperator_RightNull_ReturnsFalse()
+    {
+        var left = Channel(HashA);
+        AceChannel? right = null;
+
+        Assert.False(left == right);
+        Assert.True(left != right);
+    }
 }

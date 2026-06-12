@@ -91,6 +91,19 @@ public sealed class AceChannel : IEquatable<AceChannel>
     /// </summary>
     public bool IsReliable => !Disabled && Status == ChannelStatus.Working;
 
+    /// <summary>
+    /// Returns <see langword="true"/> when both instances refer to the same infohash identity, or
+    /// both are <see langword="null"/>. Consistent with <see cref="Equals(AceChannel?)"/>.
+    /// </summary>
+    public static bool operator ==(AceChannel? left, AceChannel? right)
+        => left is null ? right is null : left.Equals(right);
+
+    /// <summary>
+    /// Returns <see langword="true"/> when the two instances do not share the same infohash identity.
+    /// Consistent with <see cref="Equals(AceChannel?)"/>.
+    /// </summary>
+    public static bool operator !=(AceChannel? left, AceChannel? right) => !(left == right);
+
     /// <inheritdoc />
     public bool Equals(AceChannel? other) => other is not null && Infohash.Equals(other.Infohash);
 
