@@ -14,7 +14,7 @@ namespace Jellyfin.Plugin.AceStream.Infrastructure.Jellyfin;
 /// (ISP: the Application port returns only domain entities; the acelive side-channel lives in
 /// Infrastructure).
 /// </remarks>
-public sealed class PluginCustomChannelRepository : ICustomChannelRepository
+public sealed class PluginCustomChannelRepository : ICustomChannelRepository, IAceLiveEntrySource
 {
     private readonly M3uParseCache _cache = new();
 

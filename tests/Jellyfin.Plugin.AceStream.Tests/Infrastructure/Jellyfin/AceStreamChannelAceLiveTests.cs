@@ -220,7 +220,9 @@ public class AceStreamChannelAceLiveTests
         var resolver = new FakeAceLiveResolver(infohash);
         var entry = new AceLiveEntry(AceLiveName, AceLiveUrl);
         var source = new FakeAceLiveEntrySource(entry);
-        var channel = Channel(aceLiveSource: source, resolver: resolver);
+        // populateStreams: true so the probe reports actual streams → no evict-retry fires.
+        var probe = new FakeMediaSourceProbe(populateStreams: true);
+        var channel = Channel(aceLiveSource: source, resolver: resolver, probe: probe);
 
         // Get the item id from BuildCustomItems
         var items = await channel.GetChannelItems(
@@ -282,8 +284,7 @@ public class AceStreamChannelAceLiveTests
     {
         // Re-resolution returns null the second time → degrade to empty.
         var infohash = Infohash.Create(Hash);
-        int callCount = 0;
-        var resolver = new SequencedResolver(infohash, infohash: null);
+        var resolver = new SequencedResolver(infohash, null);
         var probe = new FakeMediaSourceProbe(populateStreams: false);
         var entry = new AceLiveEntry(AceLiveName, AceLiveUrl);
         var source = new FakeAceLiveEntrySource(entry);

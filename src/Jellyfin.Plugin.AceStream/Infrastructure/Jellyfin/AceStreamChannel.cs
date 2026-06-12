@@ -1,5 +1,8 @@
+using System.Security.Cryptography;
+using System.Text;
 using Jellyfin.Plugin.AceStream.Application;
 using Jellyfin.Plugin.AceStream.Domain;
+using Jellyfin.Plugin.AceStream.Infrastructure.Engine;
 using Jellyfin.Plugin.AceStream.Infrastructure.Proxy;
 using MediaBrowser.Controller.Channels;
 using MediaBrowser.Controller.Providers;
@@ -16,10 +19,16 @@ namespace Jellyfin.Plugin.AceStream.Infrastructure.Jellyfin;
 /// playlist. Playback media sources are resolved on demand (<see cref="IRequiresMediaInfoCallback"/>)
 /// to the acexy proxy.
 /// </summary>
+/// <remarks>
+/// AceLive entries (URLs ending with <c>.acelive</c>) are presented with an <c>acelive:</c>-prefixed
+/// Jellyfin item Id whose body is SHA1(url). At playback, the Id is detected before the normal
+/// infohash parse and the URL is resolved lazily via <see cref="IAceLiveResolver"/>.
+/// </remarks>
 public sealed class AceStreamChannel : IChannel, IRequiresMediaInfoCallback
 {
     private const string CategoryPrefix = "category:";
     private const string CustomFolderId = "custom";
+    private const string AceLiveIdPrefix = "acelive:";
     private const string DataVersionPrefix = "2-";
     private const int DefaultPageSize = 50;
 
@@ -28,6 +37,8 @@ public sealed class AceStreamChannel : IChannel, IRequiresMediaInfoCallback
     private readonly IProbeSettings _probeSettings;
     private readonly IMediaSourceProbe _probe;
     private readonly ICustomChannelRepository _customChannels;
+    private readonly IAceLiveEntrySource _aceLiveSource;
+    private readonly IAceLiveResolver _resolver;
     private readonly ILogger<AceStreamChannel> _logger;
 
     /// <summary>
@@ -38,20 +49,34 @@ public sealed class AceStreamChannel : IChannel, IRequiresMediaInfoCallback
     /// <param name="probeSettings">Provides probe-related settings such as the ffprobe analyze duration.</param>
     /// <param name="probe">Probes the live stream so Jellyfin sees the real codecs.</param>
     /// <param name="customChannels">Provides user-defined channels from the M3U playlist config.</param>
+    /// <param name="aceLiveSource">Provides pending AceLive entries for deferred resolution.</param>
+    /// <param name="resolver">Resolves <c>.acelive</c> URLs to live infohashes with a TTL cache.</param>
     /// <param name="logger">The logger.</param>
-    public AceStreamChannel(ISearchPort searchPort, IProxySettings proxySettings, IProbeSettings probeSettings, IMediaSourceProbe probe, ICustomChannelRepository customChannels, ILogger<AceStreamChannel> logger)
+    public AceStreamChannel(
+        ISearchPort searchPort,
+        IProxySettings proxySettings,
+        IProbeSettings probeSettings,
+        IMediaSourceProbe probe,
+        ICustomChannelRepository customChannels,
+        IAceLiveEntrySource aceLiveSource,
+        IAceLiveResolver resolver,
+        ILogger<AceStreamChannel> logger)
     {
         ArgumentNullException.ThrowIfNull(searchPort);
         ArgumentNullException.ThrowIfNull(proxySettings);
         ArgumentNullException.ThrowIfNull(probeSettings);
         ArgumentNullException.ThrowIfNull(probe);
         ArgumentNullException.ThrowIfNull(customChannels);
+        ArgumentNullException.ThrowIfNull(aceLiveSource);
+        ArgumentNullException.ThrowIfNull(resolver);
         ArgumentNullException.ThrowIfNull(logger);
         _searchPort = searchPort;
         _proxySettings = proxySettings;
         _probeSettings = probeSettings;
         _probe = probe;
         _customChannels = customChannels;
+        _aceLiveSource = aceLiveSource;
+        _resolver = resolver;
         _logger = logger;
     }
 
@@ -64,15 +89,23 @@ public sealed class AceStreamChannel : IChannel, IRequiresMediaInfoCallback
     /// <inheritdoc />
     /// <remarks>
     /// Jellyfin only re-enumerates a channel's items when this value changes, so it must reflect
-    /// the custom-channel set: editing the M3U playlist in settings changes the hash, which forces
-    /// the "Custom" folder to rebuild on the next browse.
+    /// both the custom-channel set and the pending AceLive entries: editing the M3U playlist in
+    /// settings changes the hash, which forces the "Custom" folder to rebuild on the next browse.
+    /// Resolved infohashes are NOT part of DataVersion (runtime state, not config).
     /// </remarks>
     public string DataVersion
     {
         get
         {
-            var payload = string.Join('\n', _customChannels.GetAll().Select(c => c.Infohash.Value + '|' + c.Name));
-            var hash = System.Security.Cryptography.SHA1.HashData(System.Text.Encoding.UTF8.GetBytes(payload));
+            var channels = _customChannels.GetAll();
+            var aceLiveEntries = _aceLiveSource.GetAceLiveEntries();
+
+            var lines = channels
+                .Select(c => c.Infohash.Value + '|' + c.Name)
+                .Concat(aceLiveEntries.Select(e => AceLiveIdPrefix + e.Url + '|' + e.Name));
+
+            var payload = string.Join('\n', lines);
+            var hash = SHA1.HashData(Encoding.UTF8.GetBytes(payload));
             return DataVersionPrefix + Convert.ToHexString(hash);
         }
     }
@@ -137,6 +170,12 @@ public sealed class AceStreamChannel : IChannel, IRequiresMediaInfoCallback
             return Enumerable.Empty<MediaSourceInfo>();
         }
 
+        // AceLive path: acelive: prefix detected BEFORE normal infohash parse.
+        if (id.StartsWith(AceLiveIdPrefix, StringComparison.Ordinal))
+        {
+            return await GetAceLiveMediaInfo(id, proxyBaseUrl, cancellationToken).ConfigureAwait(false);
+        }
+
         if (!TryParseInfohash(id, out var infohash))
         {
             return Enumerable.Empty<MediaSourceInfo>();
@@ -155,6 +194,79 @@ public sealed class AceStreamChannel : IChannel, IRequiresMediaInfoCallback
 
     /// <inheritdoc />
     public IEnumerable<ImageType> GetSupportedChannelImages() => Array.Empty<ImageType>();
+
+    // ── AceLive resolution ────────────────────────────────────────────────────
+
+    private async Task<IEnumerable<MediaSourceInfo>> GetAceLiveMediaInfo(
+        string id,
+        string proxyBaseUrl,
+        CancellationToken cancellationToken)
+    {
+        var url = LookupUrlById(id);
+        if (url is null)
+        {
+            _logger.LogWarning("AceLive item {Id} not found in current playlist; returning empty.", id);
+            return Enumerable.Empty<MediaSourceInfo>();
+        }
+
+        var infohash = await _resolver.ResolveAsync(url, cancellationToken).ConfigureAwait(false);
+        if (infohash is null)
+        {
+            _logger.LogWarning("AceLive URL {Url} could not be resolved; returning empty.", url);
+            return Enumerable.Empty<MediaSourceInfo>();
+        }
+
+        var source = ProxyMediaSource.Build(proxyBaseUrl, infohash, _probeSettings.ProbeAnalyzeDurationMs);
+        await _probe.EnrichAsync(source, cancellationToken).ConfigureAwait(false);
+
+        // If the probe pipeline returned no media streams, the resolved infohash may be stale
+        // (broadcast rotation). Evict it and re-resolve once to recover.
+        if (source.MediaStreams is null || source.MediaStreams.Count == 0)
+        {
+            _logger.LogDebug("AceLive URL {Url} yielded empty streams after enrich; evicting and re-resolving.", url);
+            _resolver.Evict(url);
+
+            var retryInfohash = await _resolver.ResolveAsync(url, cancellationToken).ConfigureAwait(false);
+            if (retryInfohash is null)
+            {
+                _logger.LogWarning("AceLive URL {Url} re-resolution returned null; returning empty.", url);
+                return Enumerable.Empty<MediaSourceInfo>();
+            }
+
+            source = ProxyMediaSource.Build(proxyBaseUrl, retryInfohash, _probeSettings.ProbeAnalyzeDurationMs);
+            await _probe.EnrichAsync(source, cancellationToken).ConfigureAwait(false);
+        }
+
+        return new[] { source };
+    }
+
+    /// <summary>
+    /// Looks up the original <c>.acelive</c> URL for a given <c>acelive:</c>-prefixed item id by
+    /// recomputing the id from each current AceLive entry and matching. The same hash helper used
+    /// by <see cref="BuildAceLiveItems"/> ensures the id and the lookup never diverge.
+    /// </summary>
+    private string? LookupUrlById(string id)
+    {
+        foreach (var entry in _aceLiveSource.GetAceLiveEntries())
+        {
+            if (ComputeAceLiveId(entry.Url) == id)
+            {
+                return entry.Url;
+            }
+        }
+
+        return null;
+    }
+
+    // ── Item helpers ──────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Computes the stable, bounded Jellyfin item Id for a <c>.acelive</c> URL.
+    /// Format: <c>acelive:&lt;40-hex SHA1(url)&gt;</c> — prefixed to avoid collision with the
+    /// 40-hex infohash namespace that the normal path accepts.
+    /// </summary>
+    private static string ComputeAceLiveId(string url)
+        => AceLiveIdPrefix + Convert.ToHexString(SHA1.HashData(Encoding.UTF8.GetBytes(url))).ToLowerInvariant();
 
     private static bool TryParseInfohash(string id, out Infohash infohash)
     {
@@ -181,10 +293,15 @@ public sealed class AceStreamChannel : IChannel, IRequiresMediaInfoCallback
             })
             .ToList();
 
-        var customCount = _customChannels.GetAll().Count;
-        if (customCount > 0)
+        var customChannelCount = _customChannels.GetAll().Count;
+        var aceLiveCount = _aceLiveSource.GetAceLiveEntries().Count;
+
+        if (customChannelCount > 0 || aceLiveCount > 0)
         {
-            _logger.LogDebug("AceStream serving {Count} custom channel(s) from the M3U playlist.", customCount);
+            _logger.LogDebug(
+                "AceStream serving {ChannelCount} custom channel(s) and {AceLiveCount} AceLive entry/ies from the M3U playlist.",
+                customChannelCount,
+                aceLiveCount);
             items.Add(new ChannelItemInfo
             {
                 Id = CustomFolderId,
@@ -198,8 +315,7 @@ public sealed class AceStreamChannel : IChannel, IRequiresMediaInfoCallback
 
     private ChannelItemResult BuildCustomItems()
     {
-        var channels = _customChannels.GetAll();
-        var items = channels.Select(c => new ChannelItemInfo
+        var channelItems = _customChannels.GetAll().Select(c => new ChannelItemInfo
         {
             Id = c.Infohash.Value,
             Name = c.Name,
@@ -207,10 +323,24 @@ public sealed class AceStreamChannel : IChannel, IRequiresMediaInfoCallback
             MediaType = ChannelMediaType.Video,
             ContentType = ChannelMediaContentType.TvExtra,
             IsLiveStream = true,
-        }).ToList();
+        });
 
+        var aceLiveItems = BuildAceLiveItems();
+
+        var items = channelItems.Concat(aceLiveItems).ToList();
         return new ChannelItemResult { Items = items, TotalRecordCount = items.Count };
     }
+
+    private IEnumerable<ChannelItemInfo> BuildAceLiveItems()
+        => _aceLiveSource.GetAceLiveEntries().Select(entry => new ChannelItemInfo
+        {
+            Id = ComputeAceLiveId(entry.Url),
+            Name = entry.Name,
+            Type = ChannelItemType.Media,
+            MediaType = ChannelMediaType.Video,
+            ContentType = ChannelMediaContentType.TvExtra,
+            IsLiveStream = true,
+        });
 
     private async Task<ChannelItemResult> BuildCategoryItems(InternalChannelItemQuery query, CancellationToken cancellationToken)
     {
