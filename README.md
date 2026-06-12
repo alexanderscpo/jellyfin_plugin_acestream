@@ -84,22 +84,20 @@ Missing or wrong URLs never break browsing — folders just come back empty and 
 
 ## Custom channels (M3U)
 
-Paste a standard M3U playlist; only `acestream://` entries are used, anything else is ignored:
+Paste a standard M3U playlist. Two kinds of entries are supported — anything else is ignored:
+
+- `acestream://<infohash>` — the classic 40-hex links public channel lists use.
+- An `http(s)` URL pointing to a `.acelive` transport file — for private broadcasts shared within a community. The plugin resolves the stream automatically when you press play; you never deal with infohashes.
 
 ```m3u
 #EXTM3U
 #EXTINF:-1 group-title="Sports",My Sports Channel
 acestream://f23bf1ae6d6bef0a6eab9f5e29441c2e6526f24a
-#EXTINF:-1,Another Channel
-acestream://628c180b147a6c1b16f1c326bb59cf6c7d48bd1c
+#EXTINF:-1 group-title="Private",My Community Stream
+http://my-server.example/stream.acelive
 ```
 
-> **The 40-hex id must be the stream's *infohash*.** Public channel lists already use infohashes, so they work as-is. If you broadcast your own stream, beware: the engine's `get_content_id` value is **not** the infohash and will silently fail to play. Get the real infohash by opening the transport file once and reading the response:
->
-> ```bash
-> curl "http://<engine>:6878/ace/getstream?url=<URL-to-your.acelive>&format=json"
-> # → response.infohash is the value to use
-> ```
+> **Using a raw 40-hex id?** It must be the stream's *infohash*. Public channel lists already use infohashes, so they work as-is — but the engine's `get_content_id` value is **not** the infohash and will silently fail to play. For your own broadcasts, skip the hash entirely: paste the `.acelive` URL and let the plugin resolve it.
 
 ## How it works
 
