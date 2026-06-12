@@ -1,4 +1,3 @@
-using Jellyfin.Plugin.AceStream.Domain;
 using Jellyfin.Plugin.AceStream.Infrastructure.Jellyfin;
 
 namespace Jellyfin.Plugin.AceStream.Tests.Infrastructure.Jellyfin;
@@ -14,7 +13,7 @@ public class M3uParseCacheTests
     public void GetOrParse_SamePlaylistString_DoesNotReparseSecondTime()
     {
         int parseCalls = 0;
-        IReadOnlyList<CustomChannel> CountingParser(string? content)
+        ParsedPlaylist CountingParser(string? content)
         {
             parseCalls++;
             return M3uPlaylistParser.Parse(content);
@@ -33,7 +32,7 @@ public class M3uParseCacheTests
     public void GetOrParse_DifferentPlaylistContent_ReparsesBoth()
     {
         int parseCalls = 0;
-        IReadOnlyList<CustomChannel> CountingParser(string? content)
+        ParsedPlaylist CountingParser(string? content)
         {
             parseCalls++;
             return M3uPlaylistParser.Parse(content);
@@ -51,7 +50,7 @@ public class M3uParseCacheTests
     public void GetOrParse_ChangedPlaylist_InvalidatesCacheAndReparses()
     {
         int parseCalls = 0;
-        IReadOnlyList<CustomChannel> CountingParser(string? content)
+        ParsedPlaylist CountingParser(string? content)
         {
             parseCalls++;
             return M3uPlaylistParser.Parse(content);
@@ -73,12 +72,17 @@ public class M3uParseCacheTests
     {
         var cache = new M3uParseCache(M3uPlaylistParser.Parse);
 
-        Assert.Empty(cache.GetOrParse(null));
-        Assert.Empty(cache.GetOrParse(string.Empty));
+        var nullResult = cache.GetOrParse(null);
+        var emptyResult = cache.GetOrParse(string.Empty);
+
+        Assert.Empty(nullResult.Channels);
+        Assert.Empty(nullResult.AceLive);
+        Assert.Empty(emptyResult.Channels);
+        Assert.Empty(emptyResult.AceLive);
     }
 
     [Fact]
-    public void GetOrParse_SameInstance_ReturnsSameList()
+    public void GetOrParse_SameInstance_ReturnsSameObject()
     {
         var cache = new M3uParseCache(M3uPlaylistParser.Parse);
         var playlist = SingleChannelPlaylist();
@@ -87,5 +91,39 @@ public class M3uParseCacheTests
         var second = cache.GetOrParse(playlist);
 
         Assert.Same(first, second);
+    }
+
+    // ── Task 2.5 — ParsedPlaylist caching (acelive entries cached alongside channels) ──
+
+    [Fact]
+    public void GetOrParse_PlaylistWithAceLiveEntry_ReturnsBothChannelsAndAceLive()
+    {
+        var playlist = $"#EXTM3U\n#EXTINF:-1,TVO\nacestream://{Hash1}\n#EXTINF:-1,Live\nhttp://host/stream.acelive";
+        var cache = new M3uParseCache(M3uPlaylistParser.Parse);
+
+        var result = cache.GetOrParse(playlist);
+
+        Assert.Single(result.Channels);
+        Assert.Single(result.AceLive);
+        Assert.Equal("Live", result.AceLive[0].Name);
+    }
+
+    [Fact]
+    public void GetOrParse_AceLivePlaylist_CachesOnSecondCall()
+    {
+        int parseCalls = 0;
+        ParsedPlaylist CountingParser(string? content)
+        {
+            parseCalls++;
+            return M3uPlaylistParser.Parse(content);
+        }
+
+        var cache = new M3uParseCache(CountingParser);
+        var playlist = "http://host/stream.acelive";
+
+        cache.GetOrParse(playlist);
+        cache.GetOrParse(playlist);
+
+        Assert.Equal(1, parseCalls);
     }
 }
