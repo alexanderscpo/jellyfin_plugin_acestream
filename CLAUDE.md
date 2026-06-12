@@ -38,5 +38,5 @@ Respect the SOLID principles at all times. Concretely, in this codebase:
 
 ## Toolchain
 
-- Target framework: **net9.0** is what Jellyfin 10.11 loads; the project is temporarily on **net10.0** by explicit decision (validate load in a real Jellyfin host before trusting it).
-- Build/test with the system .NET SDK at `/usr/lib64/dotnet`.
+- Target framework: **net9.0** — what Jellyfin 10.11 loads. Both `csproj` files target it.
+- Build/test with the system .NET SDK at `/usr/lib64/dotnet`. The machine only ships the .NET 10 runtime, so run tests with `DOTNET_ROLL_FORWARD=Major`.

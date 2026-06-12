@@ -7,4 +7,7 @@ public sealed class PluginEngineSettings : IEngineSettings
 {
     /// <inheritdoc />
     public string BaseUrl => Plugin.Instance?.Configuration.EngineUrl ?? string.Empty;
+
+    /// <inheritdoc />
+    public int ReadinessTimeoutSeconds => Plugin.Instance?.Configuration.ReadinessTimeoutSeconds ?? 30;
 }

@@ -28,7 +28,7 @@ public static class ProxyMediaSource
         ArgumentException.ThrowIfNullOrWhiteSpace(proxyBaseUrl);
         ArgumentNullException.ThrowIfNull(infohash);
 
-        var path = $"{proxyBaseUrl.TrimEnd('/')}/ace/getstream?infohash={infohash.Value}";
+        var path = BuildStreamUrl(proxyBaseUrl, infohash);
         var analyzeDuration = analyzeDurationMs > 0 ? analyzeDurationMs : DefaultAnalyzeDurationMs;
 
         return new MediaSourceInfo
@@ -56,4 +56,14 @@ public static class ProxyMediaSource
             SupportsTranscoding = true,
         };
     }
+
+    /// <summary>
+    /// Builds the acexy stream URL for a channel — the single source of truth for the playback path,
+    /// shared by the media source and the readiness check so both hit the exact same endpoint.
+    /// </summary>
+    /// <param name="proxyBaseUrl">The acexy proxy base URL.</param>
+    /// <param name="infohash">The channel identity.</param>
+    /// <returns>The acexy <c>/ace/getstream</c> URL for the infohash.</returns>
+    public static string BuildStreamUrl(string proxyBaseUrl, Infohash infohash)
+        => $"{proxyBaseUrl.TrimEnd('/')}/ace/getstream?infohash={infohash.Value}";
 }

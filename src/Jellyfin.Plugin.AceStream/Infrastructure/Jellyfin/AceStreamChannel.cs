@@ -6,37 +6,53 @@ using MediaBrowser.Controller.Providers;
 using MediaBrowser.Model.Channels;
 using MediaBrowser.Model.Dto;
 using MediaBrowser.Model.Entities;
+using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.AceStream.Infrastructure.Jellyfin;
 
 /// <summary>
-/// The Jellyfin channel for AceStream. The root lists category folders, and each folder
-/// lists that category's channels (paged) via the engine's <c>/search</c>. Playback media
-/// sources are resolved on demand (<see cref="IRequiresMediaInfoCallback"/>) to the acexy proxy.
+/// The Jellyfin channel for AceStream. The root lists category folders (from the engine's
+/// <c>/search</c>) and, when configured, a "Custom" folder populated from the plugin's M3U
+/// playlist. Playback media sources are resolved on demand (<see cref="IRequiresMediaInfoCallback"/>)
+/// to the acexy proxy.
 /// </summary>
 public sealed class AceStreamChannel : IChannel, IRequiresMediaInfoCallback
 {
     private const string CategoryPrefix = "category:";
+    private const string CustomFolderId = "custom";
+    private const string DataVersionPrefix = "2-";
     private const int DefaultPageSize = 50;
 
     private readonly ISearchPort _searchPort;
     private readonly IProxySettings _proxySettings;
+    private readonly IProbeSettings _probeSettings;
     private readonly IMediaSourceProbe _probe;
+    private readonly ICustomChannelRepository _customChannels;
+    private readonly ILogger<AceStreamChannel> _logger;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="AceStreamChannel"/> class.
     /// </summary>
     /// <param name="searchPort">The search port used to list a category's channels.</param>
     /// <param name="proxySettings">Provides the proxy base URL used to build playback sources.</param>
+    /// <param name="probeSettings">Provides probe-related settings such as the ffprobe analyze duration.</param>
     /// <param name="probe">Probes the live stream so Jellyfin sees the real codecs.</param>
-    public AceStreamChannel(ISearchPort searchPort, IProxySettings proxySettings, IMediaSourceProbe probe)
+    /// <param name="customChannels">Provides user-defined channels from the M3U playlist config.</param>
+    /// <param name="logger">The logger.</param>
+    public AceStreamChannel(ISearchPort searchPort, IProxySettings proxySettings, IProbeSettings probeSettings, IMediaSourceProbe probe, ICustomChannelRepository customChannels, ILogger<AceStreamChannel> logger)
     {
         ArgumentNullException.ThrowIfNull(searchPort);
         ArgumentNullException.ThrowIfNull(proxySettings);
+        ArgumentNullException.ThrowIfNull(probeSettings);
         ArgumentNullException.ThrowIfNull(probe);
+        ArgumentNullException.ThrowIfNull(customChannels);
+        ArgumentNullException.ThrowIfNull(logger);
         _searchPort = searchPort;
         _proxySettings = proxySettings;
+        _probeSettings = probeSettings;
         _probe = probe;
+        _customChannels = customChannels;
+        _logger = logger;
     }
 
     /// <inheritdoc />
@@ -46,7 +62,20 @@ public sealed class AceStreamChannel : IChannel, IRequiresMediaInfoCallback
     public string Description => "Browse, search and play AceStream channels.";
 
     /// <inheritdoc />
-    public string DataVersion => "1";
+    /// <remarks>
+    /// Jellyfin only re-enumerates a channel's items when this value changes, so it must reflect
+    /// the custom-channel set: editing the M3U playlist in settings changes the hash, which forces
+    /// the "Custom" folder to rebuild on the next browse.
+    /// </remarks>
+    public string DataVersion
+    {
+        get
+        {
+            var payload = string.Join('\n', _customChannels.GetAll().Select(c => c.Infohash.Value + '|' + c.Name));
+            var hash = System.Security.Cryptography.SHA1.HashData(System.Text.Encoding.UTF8.GetBytes(payload));
+            return DataVersionPrefix + Convert.ToHexString(hash);
+        }
+    }
 
     /// <inheritdoc />
     public string HomePageUrl => "https://acestream.org";
@@ -71,7 +100,12 @@ public sealed class AceStreamChannel : IChannel, IRequiresMediaInfoCallback
 
         if (string.IsNullOrEmpty(query.FolderId))
         {
-            return BuildCategoryFolders();
+            return BuildRootFolders();
+        }
+
+        if (query.FolderId == CustomFolderId)
+        {
+            return BuildCustomItems();
         }
 
         if (query.FolderId.StartsWith(CategoryPrefix, StringComparison.Ordinal))
@@ -85,9 +119,20 @@ public sealed class AceStreamChannel : IChannel, IRequiresMediaInfoCallback
     /// <inheritdoc />
     public async Task<IEnumerable<MediaSourceInfo>> GetChannelItemMediaInfo(string id, CancellationToken cancellationToken)
     {
-        var proxyBaseUrl = _proxySettings.BaseUrl;
+        // A null/blank id is unplayable; degrade to empty like every other failure path here
+        // (and so the StartsWith below is safe).
+        if (string.IsNullOrWhiteSpace(id))
+        {
+            return Enumerable.Empty<MediaSourceInfo>();
+        }
 
-        if (string.IsNullOrWhiteSpace(proxyBaseUrl) || id.StartsWith(CategoryPrefix, StringComparison.Ordinal))
+        if (id.StartsWith(CategoryPrefix, StringComparison.Ordinal))
+        {
+            return Enumerable.Empty<MediaSourceInfo>();
+        }
+
+        var proxyBaseUrl = _proxySettings.BaseUrl;
+        if (string.IsNullOrWhiteSpace(proxyBaseUrl))
         {
             return Enumerable.Empty<MediaSourceInfo>();
         }
@@ -99,7 +144,7 @@ public sealed class AceStreamChannel : IChannel, IRequiresMediaInfoCallback
 
         // Probe the live stream so Jellyfin sees the real codecs and remuxes instead of
         // re-encoding a stream of unknown codecs (which fails decoding a mid-GOP join).
-        var source = ProxyMediaSource.Build(proxyBaseUrl, infohash, _proxySettings.ProbeAnalyzeDurationMs);
+        var source = ProxyMediaSource.Build(proxyBaseUrl, infohash, _probeSettings.ProbeAnalyzeDurationMs);
         await _probe.EnrichAsync(source, cancellationToken).ConfigureAwait(false);
         return new[] { source };
     }
@@ -125,7 +170,7 @@ public sealed class AceStreamChannel : IChannel, IRequiresMediaInfoCallback
         }
     }
 
-    private static ChannelItemResult BuildCategoryFolders()
+    private ChannelItemResult BuildRootFolders()
     {
         var items = AceCategories.Browseable
             .Select(category => new ChannelItemInfo
@@ -135,6 +180,34 @@ public sealed class AceStreamChannel : IChannel, IRequiresMediaInfoCallback
                 Type = ChannelItemType.Folder,
             })
             .ToList();
+
+        var customCount = _customChannels.GetAll().Count;
+        if (customCount > 0)
+        {
+            _logger.LogDebug("AceStream serving {Count} custom channel(s) from the M3U playlist.", customCount);
+            items.Add(new ChannelItemInfo
+            {
+                Id = CustomFolderId,
+                Name = "Custom",
+                Type = ChannelItemType.Folder,
+            });
+        }
+
+        return new ChannelItemResult { Items = items, TotalRecordCount = items.Count };
+    }
+
+    private ChannelItemResult BuildCustomItems()
+    {
+        var channels = _customChannels.GetAll();
+        var items = channels.Select(c => new ChannelItemInfo
+        {
+            Id = c.Infohash.Value,
+            Name = c.Name,
+            Type = ChannelItemType.Media,
+            MediaType = ChannelMediaType.Video,
+            ContentType = ChannelMediaContentType.TvExtra,
+            IsLiveStream = true,
+        }).ToList();
 
         return new ChannelItemResult { Items = items, TotalRecordCount = items.Count };
     }

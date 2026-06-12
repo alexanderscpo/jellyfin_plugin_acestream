@@ -10,9 +10,4 @@ public interface IProxySettings
     /// Gets the proxy base URL (e.g. <c>http://acexy:8080</c>).
     /// </summary>
     string BaseUrl { get; }
-
-    /// <summary>
-    /// Gets how long (in milliseconds) ffprobe analyzes a live stream when discovering codecs.
-    /// </summary>
-    int ProbeAnalyzeDurationMs { get; }
 }

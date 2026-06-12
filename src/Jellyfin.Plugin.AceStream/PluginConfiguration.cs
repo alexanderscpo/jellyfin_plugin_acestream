@@ -23,4 +23,25 @@ public sealed class PluginConfiguration : BasePluginConfiguration
     /// bounded; smaller is faster to start, larger is more robust on slow channels.
     /// </summary>
     public int ProbeAnalyzeDurationMs { get; set; } = 5000;
+
+    /// <summary>
+    /// Gets or sets how long (in minutes) discovered codecs are cached per channel so repeat plays
+    /// skip the readiness check and ffprobe. Codecs are stable, so a few minutes is plenty; set to
+    /// <c>0</c> to disable the cache entirely.
+    /// </summary>
+    public int CodecCacheTtlMinutes { get; set; } = 5;
+
+    /// <summary>
+    /// Gets or sets how long (in seconds) to poll the engine session for "dl" status before
+    /// declaring the channel not ready. A cold AceStream session takes 15–25 s of prebuffering;
+    /// keep this above 30 s for best results. Set to 0 to fall back to fail-open immediately.
+    /// </summary>
+    public int ReadinessTimeoutSeconds { get; set; } = 30;
+
+    /// <summary>
+    /// Gets or sets an M3U playlist with <c>acestream://</c> URIs that appear as a "Custom" folder
+    /// in the channel browser. Standard <c>#EXTINF</c> headers are supported; entries with
+    /// non-AceStream URLs or invalid infohashes are silently ignored.
+    /// </summary>
+    public string M3uPlaylist { get; set; } = string.Empty;
 }

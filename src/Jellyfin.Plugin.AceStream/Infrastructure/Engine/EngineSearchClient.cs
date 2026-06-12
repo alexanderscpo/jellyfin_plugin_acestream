@@ -2,18 +2,35 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using Jellyfin.Plugin.AceStream.Application;
 using Jellyfin.Plugin.AceStream.Domain;
+using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.AceStream.Infrastructure.Engine;
 
 /// <summary>
 /// <see cref="ISearchPort"/> adapter backed by the AceStream engine's HTTP <c>/search</c> node.
 /// Translates the engine's grouped, snake_case JSON into flat domain <see cref="AceChannel"/>s.
-/// The engine base URL is read per request from <see cref="IEngineSettings"/> so configuration
-/// changes take effect without rebuilding this (potentially long-lived) client.
+/// The engine base URL is read per request from <see cref="IEngineSettings"/>, and a fresh
+/// <see cref="HttpClient"/> is resolved per request from <see cref="IHttpClientFactory"/> so the
+/// factory can rotate the underlying handler (a captured client would defeat that and leave the
+/// connection pool stale when the engine host changes). A transient engine failure degrades to an
+/// empty result rather than breaking the browse, mirroring the resilient probe path.
 /// </summary>
 public sealed class EngineSearchClient : ISearchPort
 {
+    /// <summary>
+    /// The name of the <see cref="IHttpClientFactory"/> client used to call the engine.
+    /// </summary>
+    internal const string HttpClientName = "AceEngine";
+
     private const int MaxPageSize = 200;
+
+    /// <summary>
+    /// Per-request timeout applied on top of the caller's token. The engine's HTTP client has no
+    /// explicit timeout (inherits HttpClient's 100 s default), so we guard here: if the engine
+    /// accepts the connection but stalls, the linked CTS fires after this window and we degrade
+    /// to an empty result rather than letting a TaskCanceledException escape to the channel browser.
+    /// </summary>
+    private static readonly TimeSpan DefaultSearchTimeout = TimeSpan.FromSeconds(15);
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -21,20 +38,31 @@ public sealed class EngineSearchClient : ISearchPort
         PropertyNameCaseInsensitive = true,
     };
 
-    private readonly HttpClient _httpClient;
+    private readonly IHttpClientFactory _httpClientFactory;
     private readonly IEngineSettings _settings;
+    private readonly ILogger<EngineSearchClient> _logger;
+    private readonly TimeSpan _searchTimeout;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="EngineSearchClient"/> class.
     /// </summary>
-    /// <param name="httpClient">The HTTP client used to call the engine.</param>
+    /// <param name="httpClientFactory">Creates the HTTP client used to call the engine, per request.</param>
     /// <param name="settings">Provides the current engine base URL.</param>
-    public EngineSearchClient(HttpClient httpClient, IEngineSettings settings)
+    /// <param name="logger">The logger.</param>
+    /// <param name="searchTimeout">Per-request timeout; defaults to 15 s when omitted.</param>
+    public EngineSearchClient(
+        IHttpClientFactory httpClientFactory,
+        IEngineSettings settings,
+        ILogger<EngineSearchClient> logger,
+        TimeSpan? searchTimeout = null)
     {
-        ArgumentNullException.ThrowIfNull(httpClient);
+        ArgumentNullException.ThrowIfNull(httpClientFactory);
         ArgumentNullException.ThrowIfNull(settings);
-        _httpClient = httpClient;
+        ArgumentNullException.ThrowIfNull(logger);
+        _httpClientFactory = httpClientFactory;
         _settings = settings;
+        _logger = logger;
+        _searchTimeout = searchTimeout ?? DefaultSearchTimeout;
     }
 
     /// <inheritdoc />
@@ -45,15 +73,41 @@ public sealed class EngineSearchClient : ISearchPort
         var baseUrl = _settings.BaseUrl;
         if (string.IsNullOrWhiteSpace(baseUrl))
         {
-            throw new InvalidOperationException("The AceStream engine URL is not configured.");
+            _logger.LogWarning("AceStream engine URL is not configured; returning empty result.");
+            return new SearchResult(0, Array.Empty<AceChannel>());
         }
 
         var url = BuildRequestUrl(baseUrl, request);
-        var dto = await _httpClient
-            .GetFromJsonAsync<SearchResponseDto>(url, JsonOptions, cancellationToken)
-            .ConfigureAwait(false);
 
-        return Map(dto);
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(_searchTimeout);
+
+        try
+        {
+            var httpClient = _httpClientFactory.CreateClient(HttpClientName);
+            var dto = await httpClient
+                .GetFromJsonAsync<SearchResponseDto>(url, JsonOptions, timeout.Token)
+                .ConfigureAwait(false);
+
+            return Map(dto);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            // The engine accepted the connection but stalled past the per-request timeout.
+            // Degrade to an empty page rather than breaking the channel browser.
+            _logger.LogWarning(
+                "AceStream search timed out after {Timeout}s for {Url}; returning empty result.",
+                _searchTimeout.TotalSeconds,
+                url);
+            return new SearchResult(0, Array.Empty<AceChannel>());
+        }
+        catch (Exception ex) when (ex is HttpRequestException or JsonException)
+        {
+            // A transient engine failure (engine down, bad body) must not break browsing —
+            // degrade to an empty page. Caller cancellation (OperationCanceledException) still propagates.
+            _logger.LogWarning(ex, "AceStream search failed for {Url}; returning empty result.", url);
+            return new SearchResult(0, Array.Empty<AceChannel>());
+        }
     }
 
     private static string BuildRequestUrl(string baseUrl, SearchRequest request)
@@ -120,7 +174,7 @@ public sealed class EngineSearchClient : ISearchPort
             channel = new AceChannel(
                 Infohash.Create(item.Infohash),
                 item.Name,
-                item.Status.ToChannelStatus(),
+                EngineStatusMapper.Map(item.Status),
                 Availability.Create(Math.Clamp(item.Availability, 0.0, 1.0)),
                 item.Categories ?? (IReadOnlyList<string>)Array.Empty<string>(),
                 item.Disabled,

@@ -6,6 +6,7 @@ using MediaBrowser.Controller;
 using MediaBrowser.Controller.Channels;
 using MediaBrowser.Controller.Plugins;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.AceStream;
 
@@ -21,11 +22,40 @@ public sealed class PluginServiceRegistrator : IPluginServiceRegistrator
         // so the search adapter builds absolute URLs and does not depend on HttpClient.BaseAddress.
         serviceCollection.AddSingleton<IEngineSettings, PluginEngineSettings>();
         serviceCollection.AddSingleton<IProxySettings, PluginProxySettings>();
-        serviceCollection.AddHttpClient<ISearchPort, EngineSearchClient>();
 
-        // Probes the live stream (via Jellyfin's IMediaEncoder) so the channel can hand
-        // Jellyfin the real codecs and let it choose remux over transcode.
-        serviceCollection.AddSingleton<IMediaSourceProbe, MediaEncoderStreamProbe>();
+        // Register a named client (not a typed client) and resolve it per request via
+        // IHttpClientFactory. The search adapter is a singleton, so a typed/captured client would
+        // pin one HttpMessageHandler forever and defeat the factory's handler rotation.
+        serviceCollection.AddHttpClient(EngineSearchClient.HttpClientName);
+        serviceCollection.AddSingleton<ISearchPort, EngineSearchClient>();
+
+        // Checks live readiness by opening an engine session and polling its stat_url until "dl"
+        // so the codec probe is skipped fast on dead channels. Reuses the "AceEngine" named client
+        // already registered above; no additional named client registration is needed.
+        serviceCollection.AddSingleton<IStreamReadiness, EngineSessionReadiness>();
+
+        // Probe pipeline (outermost first): cache -> readiness gate -> ffprobe.
+        //  - MediaEncoderStreamProbe runs ffprobe (via Jellyfin's IMediaEncoder) for the real codecs.
+        //  - ReadinessGatedProbe skips it when the channel is delivering no data.
+        //  - CachingMediaSourceProbe caches a successful result so repeat plays skip both.
+        serviceCollection.AddSingleton<IProbeSettings, PluginProbeSettings>();
+        serviceCollection.AddSingleton<MediaEncoderStreamProbe>();
+        serviceCollection.AddSingleton<IMediaSourceProbe>(sp =>
+        {
+            var gated = new ReadinessGatedProbe(
+                sp.GetRequiredService<MediaEncoderStreamProbe>(),
+                sp.GetRequiredService<IStreamReadiness>(),
+                sp.GetRequiredService<ILogger<ReadinessGatedProbe>>());
+
+            return new CachingMediaSourceProbe(
+                gated,
+                sp.GetRequiredService<IProbeSettings>(),
+                TimeProvider.System,
+                sp.GetRequiredService<ILogger<CachingMediaSourceProbe>>());
+        });
+
+        // User-defined channels from the M3U playlist in plugin settings.
+        serviceCollection.AddSingleton<ICustomChannelRepository, PluginCustomChannelRepository>();
 
         // Jellyfin does not auto-register plugin IChannel implementations; register it explicitly.
         serviceCollection.AddSingleton<IChannel, AceStreamChannel>();

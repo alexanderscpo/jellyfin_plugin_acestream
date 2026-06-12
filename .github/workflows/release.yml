@@ -1,0 +1,44 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
+
+      - name: Test
+        run: dotnet test --configuration Release
+
+      - name: Publish
+        run: dotnet publish src/Jellyfin.Plugin.AceStream --configuration Release --output publish
+
+      - name: Package plugin
+        run: |
+          mkdir -p package
+          cp publish/Jellyfin.Plugin.AceStream.dll meta.json package/
+          cd package
+          zip "../jellyfin-plugin-acestream_${GITHUB_REF_NAME#v}.zip" ./*
+          cd ..
+          md5sum jellyfin-plugin-acestream_*.zip > checksums.md5
+          sha256sum jellyfin-plugin-acestream_*.zip > checksums.sha256
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            jellyfin-plugin-acestream_*.zip
+            checksums.md5
+            checksums.sha256
+          generate_release_notes: true
