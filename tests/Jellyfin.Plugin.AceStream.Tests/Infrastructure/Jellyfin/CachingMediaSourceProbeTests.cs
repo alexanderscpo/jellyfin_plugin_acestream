@@ -37,6 +37,8 @@ public class CachingMediaSourceProbeTests
     {
         public FixedCacheSettings(TimeSpan ttl) => CodecCacheTtl = ttl;
 
+        public int ProbeAnalyzeDurationMs => 5000;
+
         public TimeSpan CodecCacheTtl { get; }
     }
 

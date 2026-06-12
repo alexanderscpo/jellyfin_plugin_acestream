@@ -24,6 +24,7 @@ public sealed class AceStreamChannel : IChannel, IRequiresMediaInfoCallback
 
     private readonly ISearchPort _searchPort;
     private readonly IProxySettings _proxySettings;
+    private readonly IProbeCacheSettings _probeSettings;
     private readonly IMediaSourceProbe _probe;
     private readonly ICustomChannelRepository _customChannels;
     private readonly ILogger<AceStreamChannel> _logger;
@@ -33,18 +34,21 @@ public sealed class AceStreamChannel : IChannel, IRequiresMediaInfoCallback
     /// </summary>
     /// <param name="searchPort">The search port used to list a category's channels.</param>
     /// <param name="proxySettings">Provides the proxy base URL used to build playback sources.</param>
+    /// <param name="probeSettings">Provides probe-related settings such as the ffprobe analyze duration.</param>
     /// <param name="probe">Probes the live stream so Jellyfin sees the real codecs.</param>
     /// <param name="customChannels">Provides user-defined channels from the M3U playlist config.</param>
     /// <param name="logger">The logger.</param>
-    public AceStreamChannel(ISearchPort searchPort, IProxySettings proxySettings, IMediaSourceProbe probe, ICustomChannelRepository customChannels, ILogger<AceStreamChannel> logger)
+    public AceStreamChannel(ISearchPort searchPort, IProxySettings proxySettings, IProbeCacheSettings probeSettings, IMediaSourceProbe probe, ICustomChannelRepository customChannels, ILogger<AceStreamChannel> logger)
     {
         ArgumentNullException.ThrowIfNull(searchPort);
         ArgumentNullException.ThrowIfNull(proxySettings);
+        ArgumentNullException.ThrowIfNull(probeSettings);
         ArgumentNullException.ThrowIfNull(probe);
         ArgumentNullException.ThrowIfNull(customChannels);
         ArgumentNullException.ThrowIfNull(logger);
         _searchPort = searchPort;
         _proxySettings = proxySettings;
+        _probeSettings = probeSettings;
         _probe = probe;
         _customChannels = customChannels;
         _logger = logger;
@@ -139,7 +143,7 @@ public sealed class AceStreamChannel : IChannel, IRequiresMediaInfoCallback
 
         // Probe the live stream so Jellyfin sees the real codecs and remuxes instead of
         // re-encoding a stream of unknown codecs (which fails decoding a mid-GOP join).
-        var source = ProxyMediaSource.Build(proxyBaseUrl, infohash, _proxySettings.ProbeAnalyzeDurationMs);
+        var source = ProxyMediaSource.Build(proxyBaseUrl, infohash, _probeSettings.ProbeAnalyzeDurationMs);
         await _probe.EnrichAsync(source, cancellationToken).ConfigureAwait(false);
         return new[] { source };
     }

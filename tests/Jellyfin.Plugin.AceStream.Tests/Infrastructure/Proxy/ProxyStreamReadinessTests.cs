@@ -16,8 +16,6 @@ public class ProxyStreamReadinessTests
         public FixedProxySettings(string baseUrl) => BaseUrl = baseUrl;
 
         public string BaseUrl { get; }
-
-        public int ProbeAnalyzeDurationMs => 5000;
     }
 
     private static HttpResponseMessage Ok(string body)

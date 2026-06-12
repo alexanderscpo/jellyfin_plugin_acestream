@@ -41,15 +41,22 @@ public class AceStreamChannelTests
 
     private sealed class FakeProxySettings : IProxySettings
     {
-        public FakeProxySettings(string baseUrl, int probeAnalyzeDurationMs = 5000)
-        {
-            BaseUrl = baseUrl;
-            ProbeAnalyzeDurationMs = probeAnalyzeDurationMs;
-        }
+        public FakeProxySettings(string baseUrl) => BaseUrl = baseUrl;
 
         public string BaseUrl { get; }
+    }
+
+    private sealed class FakeProbeSettings : IProbeCacheSettings
+    {
+        public FakeProbeSettings(int probeAnalyzeDurationMs = 5000, int codecCacheTtlMinutes = 5)
+        {
+            ProbeAnalyzeDurationMs = probeAnalyzeDurationMs;
+            CodecCacheTtl = TimeSpan.FromMinutes(codecCacheTtlMinutes);
+        }
 
         public int ProbeAnalyzeDurationMs { get; }
+
+        public TimeSpan CodecCacheTtl { get; }
     }
 
     private sealed class FakeMediaSourceProbe : IMediaSourceProbe
@@ -92,8 +99,9 @@ public class AceStreamChannelTests
         ICustomChannelRepository? customChannels = null)
     {
         var searchPort = port ?? new FakeSearchPort(searchResult ?? new SearchResult(0, Array.Empty<AceChannel>()));
-        var proxySettings = new FakeProxySettings(proxyUrl, probeAnalyzeDurationMs);
-        return new AceStreamChannel(searchPort, proxySettings, probe ?? new FakeMediaSourceProbe(), customChannels ?? new FakeCustomChannelRepository(), NullLogger<AceStreamChannel>.Instance);
+        var proxySettings = new FakeProxySettings(proxyUrl);
+        var probeSettings = new FakeProbeSettings(probeAnalyzeDurationMs);
+        return new AceStreamChannel(searchPort, proxySettings, probeSettings, probe ?? new FakeMediaSourceProbe(), customChannels ?? new FakeCustomChannelRepository(), NullLogger<AceStreamChannel>.Instance);
     }
 
     [Fact]
