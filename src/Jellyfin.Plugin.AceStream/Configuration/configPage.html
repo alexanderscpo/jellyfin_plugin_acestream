@@ -21,7 +21,7 @@
                 </div>
                 <div class="inputContainer">
                     <label class="inputLabel inputLabelUnfocused" for="ProbeAnalyzeDurationMs">Probe analyze duration (ms)</label>
-                    <input id="ProbeAnalyzeDurationMs" name="ProbeAnalyzeDurationMs" type="number" min="1" step="500" is="emby-input" />
+                    <input id="ProbeAnalyzeDurationMs" name="ProbeAnalyzeDurationMs" type="number" min="500" step="1" is="emby-input" />
                     <div class="fieldDescription">How long ffprobe analyzes a live stream to detect its codecs. Lower starts faster; higher is more robust on slow channels. Default 5000.</div>
                 </div>
                 <div class="inputContainer">
@@ -31,7 +31,7 @@
                 </div>
                 <div class="inputContainer">
                     <label class="inputLabel inputLabelUnfocused" for="ReadinessTimeoutSeconds">Readiness timeout (seconds)</label>
-                    <input id="ReadinessTimeoutSeconds" name="ReadinessTimeoutSeconds" type="number" min="0" step="5" is="emby-input" />
+                    <input id="ReadinessTimeoutSeconds" name="ReadinessTimeoutSeconds" type="number" min="0" step="1" is="emby-input" />
                     <div class="fieldDescription">How long to wait for the AceStream engine session to reach "downloading" state before the channel is declared not ready and the codec probe is skipped. A cold start takes 15–25 s; keep above 30 for best results. Default 30.</div>
                 </div>
                 <div class="inputContainer">
